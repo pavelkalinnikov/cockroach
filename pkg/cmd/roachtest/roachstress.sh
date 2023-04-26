@@ -172,6 +172,7 @@ args=(
   "--cockroach" "${cr}"
   "--artifacts" "${a}"
   "--count" "${count}"
+  "--debug"
 )
 if [ -n "${local}" ]; then
   args+=("--local")

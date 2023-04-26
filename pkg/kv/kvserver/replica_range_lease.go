@@ -994,8 +994,11 @@ func (r *Replica) getLeaseRLocked() (roachpb.Lease, roachpb.Lease) {
 func (r *Replica) RevokeLease(ctx context.Context, seq roachpb.LeaseSequence) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	log.Infof(ctx, "%v: RevokeLease lease at seq %v, current lease: %+v", r, seq, r.mu.state.Lease)
 	if r.mu.state.Lease.Sequence == seq {
-		r.mu.minLeaseProposedTS = r.Clock().NowAsClockTimestamp()
+		now := r.Clock().NowAsClockTimestamp()
+		log.Infof(ctx, "%v: RevokeLease bumping minLeaseProposedTS to %v", r, now)
+		r.mu.minLeaseProposedTS = now
 	}
 }
 

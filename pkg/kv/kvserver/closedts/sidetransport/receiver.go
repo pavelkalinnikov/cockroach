@@ -222,6 +222,9 @@ func (r *incomingStream) GetClosedTimestamp(
 // state.
 func (r *incomingStream) processUpdate(ctx context.Context, msg *ctpb.Update) {
 	log.VEventf(ctx, 4, "received side-transport update: %v", msg)
+	r.mu.RLock()
+	log.VEventf(ctx, 4, "currently tracked: %+v", r.mu.tracked)
+	r.mu.RUnlock()
 
 	if msg.NodeID == 0 {
 		log.Fatalf(ctx, "missing NodeID in message: %s", msg)
@@ -237,12 +240,11 @@ func (r *incomingStream) processUpdate(ctx context.Context, msg *ctpb.Update) {
 	// before updating lastClosed below since, by definition, the closed
 	// timestamps in this message don't apply to the Removed ranges.
 	if len(msg.Removed) != 0 {
-		// Note that we call r.stores.ForwardSideTransportClosedTimestampForRange while holding
-		// our read lock, not write lock. ForwardSideTransportClosedTimestampForRange will call
-		// into each Replica, telling it to hold on locally to the the info we're about to
-		// remove from the stream. We can't do this with the mutex write-locked
-		// because replicas call GetClosedTimestamp() independently, with r.mu held
-		// (=> deadlock).
+		// NB: we call r.stores.ForwardSideTransportClosedTimestampForRange while
+		// holding our read lock, not write lock. It will call into each Replica,
+		// telling it to hold on locally to the info we're about to remove from the
+		// stream. We can't do this with the mutex write-locked because replicas
+		// call GetClosedTimestamp() independently, with r.mu held (=> deadlock).
 		r.mu.RLock()
 		for _, rangeID := range msg.Removed {
 			info, ok := r.mu.tracked[rangeID]

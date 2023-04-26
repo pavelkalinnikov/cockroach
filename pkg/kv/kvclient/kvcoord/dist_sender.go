@@ -794,7 +794,16 @@ func unsetCanForwardReadTimestampFlag(ba *kvpb.BatchRequest) {
 func (ds *DistSender) Send(
 	ctx context.Context, ba *kvpb.BatchRequest,
 ) (*kvpb.BatchResponse, *kvpb.Error) {
-	ds.incrementBatchCounters(ba)
+	print := false
+	for _, req := range ba.Requests {
+		if r := req.GetAdminTransferLease(); r != nil {
+			print = true
+			fmt.Printf("sending AdminTransfer in batch: %+v\n", ba)
+		}
+	}
+	if print {
+		fmt.Println("here")
+	}
 
 	if pErr := ds.initAndVerifyBatch(ctx, ba); pErr != nil {
 		return nil, pErr
@@ -854,10 +863,16 @@ func (ds *DistSender) Send(
 
 		var rpl *kvpb.BatchResponse
 		var pErr *kvpb.Error
+		if print {
+			fmt.Println("before send")
+		}
 		if withParallelCommit {
 			rpl, pErr = ds.divideAndSendParallelCommit(ctx, ba, rs, isReverse, 0 /* batchIdx */)
 		} else {
 			rpl, pErr = ds.divideAndSendBatchToRanges(ctx, ba, rs, isReverse, withCommit, 0 /* batchIdx */)
+		}
+		if print {
+			fmt.Printf("after send: %+v\n", pErr)
 		}
 
 		if pErr == errNo1PCTxn {
@@ -890,6 +905,9 @@ func (ds *DistSender) Send(
 		if len(parts) > 0 {
 			ba.UpdateTxn(rpl.Txn)
 		}
+	}
+	if print {
+		fmt.Println("after responses")
 	}
 
 	var reply *kvpb.BatchResponse

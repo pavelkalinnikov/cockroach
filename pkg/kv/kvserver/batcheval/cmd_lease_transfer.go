@@ -72,9 +72,16 @@ func TransferLease(
 	// args.PrevLease so that we can detect lease transfers that will
 	// inevitably fail early and reject them with a detailed
 	// LeaseRejectedError before going through Raft.
-	prevLease, _ := cArgs.EvalCtx.GetLease()
+	prevLease, pending := cArgs.EvalCtx.GetLease()
 
 	newLease := args.Lease
+
+	log.Infof(ctx, "TransferLease: prev %+v, pending %+v, args.PrevLease %+v, args.Lease %+v",
+		prevLease, pending, args.PrevLease, newLease)
+	var empty roachpb.Lease
+	if pending != empty {
+		log.Warning(ctx, "TransferLease: transferring lease while there is a pending one")
+	}
 
 	// If this check is removed at some point, the filtering of learners on the
 	// sending side would have to be removed as well.

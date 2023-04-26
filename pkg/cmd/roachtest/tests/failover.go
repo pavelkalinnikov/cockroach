@@ -207,6 +207,7 @@ func runFailoverNonSystem(
 	defer failer.Cleanup(ctx)
 
 	c.Put(ctx, t.Cockroach(), "./cockroach")
+	opts.RoachprodOpts.ExtraArgs = append(opts.RoachprodOpts.ExtraArgs, "--vmodule", "receiver=4,sender=4")
 	c.Start(ctx, t.L(), opts, settings, c.Range(1, 6))
 
 	conn := c.Conn(ctx, t.L(), 1)
@@ -216,6 +217,8 @@ func runFailoverNonSystem(
 	t.Status("configuring cluster")
 	_, err := conn.ExecContext(ctx, `SET CLUSTER SETTING kv.range_split.by_load_enabled = 'false'`)
 	require.NoError(t, err)
+	// _, err = conn.ExecContext(ctx, `SET CLUSTER SETTING rpc.dialback.enabled = 'false'`)
+	// require.NoError(t, err)
 
 	// Constrain all existing zone configs to n1-n3.
 	constrainAllConfig(t, ctx, conn, 3, []int{4, 5, 6}, 0)
@@ -708,7 +711,7 @@ type failer interface {
 // blackholeFailer causes a network failure where TCP/IP packets to/from port
 // 26257 are dropped, causing network hangs and timeouts.
 //
-// If only one if input or output are enabled, connections in that direction
+// If only one of input or output are enabled, connections in that direction
 // will fail (even already established connections), but connections in the
 // other direction are still functional (including responses).
 type blackholeFailer struct {
