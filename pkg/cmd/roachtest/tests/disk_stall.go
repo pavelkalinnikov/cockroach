@@ -374,12 +374,15 @@ func (s *cgroupDiskStaller) setThroughput(
 	// cluster, we have seen nvme1n1 devices vary in 259:{0-4}.
 	dev := getDevice(s.t, s.c)
 	// The result of `getDevID` will be a major:minor pair of integers.
-	getDevID := fmt.Sprintf(
-		"cat /proc/partitions | awk '$4 == \"%s\" {printf \"%%d:%%d\", $1, $2}'", dev)
+	res, err := s.c.RunWithDetailsSingleNode(ctx, s.t.L(), nodes, fmt.Sprintf(
+		"cat /proc/partitions | awk '$4 == \"%s\" {printf \"%%d:%%d\", $1, $2}'", dev))
+	if err != nil {
+		return
+	}
 
 	s.c.Run(ctx, nodes, "sudo", "/bin/bash", "-c", fmt.Sprintf(
-		"'echo $(%s) %d > /sys/fs/cgroup/blkio/blkio.throttle.%s_bps_device'",
-		getDevID,
+		"'echo %s %d > /sys/fs/cgroup/blkio/blkio.throttle.%s_bps_device'",
+		res.Stdout,
 		bytesPerSecond,
 		readOrWrite,
 	))

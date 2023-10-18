@@ -467,13 +467,34 @@ func registerRestore(r registry.Registry) {
 						}
 					}
 
-					if slow := sp.hardware.oneSlow; slow != 0 {
-						staller := &cgroupDiskStaller{t: t, c: c, readOrWrite: []string{"write", "read"}}
-						staller.Setup(ctx)
-						for _, rw := range staller.readOrWrite {
-							staller.setThroughput(ctx, option.NodeListOption{4}, rw, slow)
+					// FIXME
+					const oneSlow = 15 << 20 /* 15 MiB/s */
+					if slow := oneSlow; slow != 0 {
+						t.Status("making node 4 slow")
+						res, err := c.RunWithDetailsSingleNode(ctx, t.L(), option.NodeListOption{4}, fmt.Sprintf(
+							"cat /proc/partitions | awk '$4 == \"nvme1n1\" {printf \"%%d:%%d\", $1, $2}'"))
+						if err != nil {
+							return err
 						}
-						defer staller.Cleanup(ctx)
+						ioMax := filepath.Join("/sys/fs/cgroup/system.slice",
+							roachtestutil.SystemInterfaceSystemdUnitName()+".service", "io.max")
+						cpuMax := filepath.Join("/sys/fs/cgroup/system.slice",
+							roachtestutil.SystemInterfaceSystemdUnitName()+".service", "cpu.max")
+						for _, rw := range []string{"rbps", "wbps"} {
+							c.Run(ctx, option.NodeListOption{4}, "sudo", "/bin/bash", "-c", fmt.Sprintf(
+								"'echo %s %s=%d > %s'",
+								res.Stdout,
+								rw,
+								slow,
+								ioMax,
+							))
+						}
+						c.Run(ctx, option.NodeListOption{4}, "sudo", "/bin/bash", "-c", fmt.Sprintf(
+							"'echo %d %d > %s'",
+							20000, // 0.2 CPU
+							100000,
+							cpuMax,
+						))
 					}
 
 					t.Status(`running restore`)
