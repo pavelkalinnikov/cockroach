@@ -295,7 +295,7 @@ type dmsetupDiskStaller struct {
 
 var _ diskStaller = (*dmsetupDiskStaller)(nil)
 
-func (s *dmsetupDiskStaller) device() string { return getDevice(s.t, s.c) }
+func (s *dmsetupDiskStaller) device() string { return "/dev/" + getDevice(s.t, s.c) }
 
 func (s *dmsetupDiskStaller) Setup(ctx context.Context) {
 	dev := s.device()
@@ -367,30 +367,19 @@ func (s *cgroupDiskStaller) Unstall(ctx context.Context, nodes option.NodeListOp
 	}
 }
 
-func (s *cgroupDiskStaller) device() (major, minor int) {
-	// TODO(jackson): Programmatically determine the device major,minor numbers.
-	// eg,:
-	//    deviceName := getDevice(s.t, s.c)
-	//    `cat /proc/partitions` and find `deviceName`
-	switch s.c.Cloud() {
-	case spec.GCE:
-		// ls -l /dev/sdb
-		// brw-rw---- 1 root disk 8, 16 Mar 27 22:08 /dev/sdb
-		return 8, 16
-	default:
-		s.t.Fatalf("unsupported cloud %q", s.c.Cloud())
-		return 0, 0
-	}
-}
-
 func (s *cgroupDiskStaller) setThroughput(
 	ctx context.Context, nodes option.NodeListOption, readOrWrite string, bytesPerSecond int,
 ) {
-	major, minor := s.device()
+	// Get the device ID on each node locally. For example, on a single AWS
+	// cluster, we have seen nvme1n1 devices vary in 259:{0-4}.
+	dev := getDevice(s.t, s.c)
+	// The result of `getDevID` will be a major:minor pair of integers.
+	getDevID := fmt.Sprintf(
+		"cat /proc/partitions | awk '$4 == \"%s\" {printf \"%%d:%%d\", $1, $2}'", dev)
+
 	s.c.Run(ctx, nodes, "sudo", "/bin/bash", "-c", fmt.Sprintf(
-		"'echo %d:%d %d > /sys/fs/cgroup/blkio/blkio.throttle.%s_bps_device'",
-		major,
-		minor,
+		"'echo $(%s) %d > /sys/fs/cgroup/blkio/blkio.throttle.%s_bps_device'",
+		getDevID,
 		bytesPerSecond,
 		readOrWrite,
 	))
@@ -399,9 +388,9 @@ func (s *cgroupDiskStaller) setThroughput(
 func getDevice(t test.Test, c cluster.Cluster) string {
 	switch c.Cloud() {
 	case spec.GCE:
-		return "/dev/sdb"
+		return "sdb"
 	case spec.AWS:
-		return "/dev/nvme1n1"
+		return "nvme1n1"
 	default:
 		t.Fatalf("unsupported cloud %q", c.Cloud())
 		return ""

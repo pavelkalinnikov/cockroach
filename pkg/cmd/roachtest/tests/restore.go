@@ -299,12 +299,13 @@ func registerRestore(r registry.Registry) {
 		{
 			// Benchmarks if per node throughput remains constant if the number of
 			// nodes doubles relative to default.
-			hardware: makeHardwareSpecs(hardwareSpecs{nodes: 8, ebsThroughput: 250 /* MB/s */}),
-			backup:   makeRestoringBackupSpecs(backupSpecs{}),
-			timeout:  1 * time.Hour,
-			clouds:   registry.AllClouds,
-			suites:   registry.Suites(registry.Nightly),
-			tags:     registry.Tags("aws"),
+			hardware: makeHardwareSpecs(hardwareSpecs{
+				nodes: 8, ebsThroughput: 250 /* MB/s */, oneSlow: 30 << 20 /* 30 MiB/s */}),
+			backup:  makeRestoringBackupSpecs(backupSpecs{}),
+			timeout: 1 * time.Hour,
+			clouds:  registry.AllClouds,
+			suites:  registry.Suites(registry.Nightly),
+			tags:    registry.Tags("aws"),
 		},
 		{
 			// Benchmarks if per node throughput remains constant if the cluster
@@ -466,6 +467,15 @@ func registerRestore(r registry.Registry) {
 						}
 					}
 
+					if slow := sp.hardware.oneSlow; slow != 0 {
+						staller := &cgroupDiskStaller{t: t, c: c, readOrWrite: []string{"write", "read"}}
+						staller.Setup(ctx)
+						for _, rw := range staller.readOrWrite {
+							staller.setThroughput(ctx, option.NodeListOption{4}, rw, slow)
+						}
+						defer staller.Cleanup(ctx)
+					}
+
 					t.Status(`running restore`)
 					metricCollector := rd.initRestorePerfMetrics(ctx, durationGauge)
 					if err := rd.run(ctx, ""); err != nil {
@@ -513,6 +523,8 @@ type hardwareSpecs struct {
 	// Availability zones to use. (Values are cloud-provider-specific.)
 	// If unset, the first of the default availability zones for the provider will be used.
 	zones []string
+
+	oneSlow int // bytes per second, or 0 if disabled
 }
 
 func (hw hardwareSpecs) makeClusterSpecs(r registry.Registry, backupCloud string) spec.ClusterSpec {
