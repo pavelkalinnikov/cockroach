@@ -120,19 +120,28 @@ func (rn *RawNode) Step(m pb.Message) error {
 // and sending messages. The returned Ready() *must* be handled and subsequently
 // passed back via Advance().
 func (rn *RawNode) Ready() Ready {
-	rd := rn.readyWithoutAccept()
+	rd := rn.asyncReadyWithoutAccept()
 	rn.acceptReady(rd)
 	return rd
 }
 
-// readyWithoutAccept returns a Ready. This is a read-only operation, i.e. there
-// is no obligation that the Ready must be handled.
+// readyWithoutAccept is an adapter that returns a Ready compatible with code
+// assuming sync log writes.
 func (rn *RawNode) readyWithoutAccept() Ready {
+	rd := rn.asyncReadyWithoutAccept()
+	rd.Messages = append(rd.Messages, rd.StorageReady.Responses...)
+	rd.Messages = append(rd.Messages, rd.ApplyReady.Responses...)
+	return rd
+}
+
+// asyncReadyWithoutAccept returns a Ready. This is a read-only operation, i.e.
+// there is no obligation that the Ready must be handled.
+func (rn *RawNode) asyncReadyWithoutAccept() Ready {
 	r := rn.raft
 	rd := Ready{
-		Storage:  newStorageAppendMsg(r),
-		Apply:    newStorageApplyMsg(r),
-		Messages: r.msgs,
+		StorageReady: newStorageAppendMsg(r),
+		ApplyReady:   newStorageApplyMsg(r),
+		Messages:     r.msgs,
 	}
 	if softSt := r.softState(); !softSt.equal(rn.prevSoftSt) {
 		// Allocate only when SoftState changes.
@@ -290,8 +299,8 @@ func newStorageAppendRespMsg(r *raft, rd StorageReady) pb.Message {
 func newStorageApplyMsg(r *raft) ApplyReady {
 	entries := r.raftLog.nextCommittedEnts()
 	return ApplyReady{
-		Entries:   entries,
-		Responses: []pb.Message{newStorageApplyRespMsg(r, entries)},
+		CommittedEntries: entries,
+		Responses:        []pb.Message{newStorageApplyRespMsg(r, entries)},
 	}
 }
 
@@ -315,15 +324,15 @@ func (rn *RawNode) acceptReady(rd Ready) {
 	if rd.SoftState != nil {
 		rn.prevSoftSt = rd.SoftState
 	}
-	if !IsEmptyHardState(rd.Storage.HardState) {
-		rn.prevHardSt = rd.Storage.HardState
+	if !IsEmptyHardState(rd.HardState) {
+		rn.prevHardSt = rd.HardState
 	}
 	rn.raft.msgs = nil
 	rn.raft.msgsAfterAppend = nil
 	rn.raft.raftLog.acceptUnstable()
-	if committed := rd.Apply.Entries; len(committed) > 0 {
-		index := committed[len(committed)-1].Index
-		rn.raft.raftLog.acceptApplying(index, entsSize(committed))
+	if entries := rd.CommittedEntries; len(entries) > 0 {
+		index := entries[len(entries)-1].Index
+		rn.raft.raftLog.acceptApplying(index, entsSize(entries))
 	}
 }
 

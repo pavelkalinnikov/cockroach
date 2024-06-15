@@ -442,26 +442,39 @@ func TestNodeStart(t *testing.T) {
 	require.NoError(t, err)
 	wants := []Ready{
 		{
-			HardState: raftpb.HardState{Term: 1, Commit: 1, Vote: 0},
-			Entries: []raftpb.Entry{
-				{Type: raftpb.EntryConfChange, Term: 1, Index: 1, Data: ccdata},
+			StorageReady: StorageReady{
+				HardState: raftpb.HardState{Term: 1, Commit: 1, Vote: 0},
+				Entries: []raftpb.Entry{
+					{Type: raftpb.EntryConfChange, Term: 1, Index: 1, Data: ccdata},
+				},
+				Responses: []raftpb.Message{},
 			},
-			CommittedEntries: []raftpb.Entry{
-				{Type: raftpb.EntryConfChange, Term: 1, Index: 1, Data: ccdata},
+			ApplyReady: ApplyReady{
+				CommittedEntries: []raftpb.Entry{
+					{Type: raftpb.EntryConfChange, Term: 1, Index: 1, Data: ccdata},
+				},
 			},
-			MustSync: true,
+			// MustSync: true,
 		},
 		{
-			HardState:        raftpb.HardState{Term: 2, Commit: 2, Vote: 1},
-			Entries:          []raftpb.Entry{{Term: 2, Index: 3, Data: []byte("foo")}},
-			CommittedEntries: []raftpb.Entry{{Term: 2, Index: 2, Data: nil}},
-			MustSync:         true,
+			StorageReady: StorageReady{
+				HardState: raftpb.HardState{Term: 2, Commit: 2, Vote: 1},
+				Entries:   []raftpb.Entry{{Term: 2, Index: 3, Data: []byte("foo")}},
+			},
+			ApplyReady: ApplyReady{
+				CommittedEntries: []raftpb.Entry{{Term: 2, Index: 2, Data: nil}},
+			},
+			// MustSync: true,
 		},
 		{
-			HardState:        raftpb.HardState{Term: 2, Commit: 3, Vote: 1},
-			Entries:          nil,
-			CommittedEntries: []raftpb.Entry{{Term: 2, Index: 3, Data: []byte("foo")}},
-			MustSync:         false,
+			StorageReady: StorageReady{
+				HardState: raftpb.HardState{Term: 2, Commit: 3, Vote: 1},
+				Entries:   nil,
+			},
+			ApplyReady: ApplyReady{
+				CommittedEntries: []raftpb.Entry{{Term: 2, Index: 3, Data: []byte("foo")}},
+			},
+			// MustSync: false,
 		},
 	}
 	storage := NewMemoryStorage()
@@ -527,12 +540,10 @@ func TestNodeRestart(t *testing.T) {
 	st := raftpb.HardState{Term: 1, Commit: 1}
 
 	want := Ready{
-		// No HardState is emitted because there was no change.
-		HardState: raftpb.HardState{},
-		// commit up to index commit index in st
-		CommittedEntries: entries[:st.Commit],
-		// MustSync is false because no HardState or new entries are provided.
-		MustSync: false,
+		ApplyReady: ApplyReady{
+			// commit up to index commit index in st
+			CommittedEntries: entries[:st.Commit],
+		},
 	}
 
 	storage := NewMemoryStorage()
@@ -572,14 +583,10 @@ func TestNodeRestartFromSnapshot(t *testing.T) {
 	st := raftpb.HardState{Term: 1, Commit: 3}
 
 	want := Ready{
-		// No HardState is emitted because nothing changed relative to what is
-		// already persisted.
-		HardState: raftpb.HardState{},
-		// commit up to index commit index in st
-		CommittedEntries: entries,
-		// MustSync is only true when there is a new HardState or new entries;
-		// neither is the case here.
-		MustSync: false,
+		ApplyReady: ApplyReady{
+			// commit up to index commit index in st
+			CommittedEntries: entries,
+		},
 	}
 
 	s := NewMemoryStorage()

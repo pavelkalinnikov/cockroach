@@ -57,7 +57,9 @@ func (env *InteractionEnv) ProcessAppendThread(idx int) error {
 	resps := m.Responses
 	m.Responses = nil
 	env.Output.WriteString("Processing:\n")
-	env.Output.WriteString(raft.DescribeMessage(m, defaultEntryFormatter) + "\n")
+	// FIXME
+	// env.Output.WriteString(raft.DescribeMessage(m, defaultEntryFormatter) + "\n")
+	env.Output.WriteString(fmt.Sprintf("%+v", m))
 
 	if err := processAppend(n, m); err != nil {
 		return err
@@ -71,20 +73,20 @@ func (env *InteractionEnv) ProcessAppendThread(idx int) error {
 	return nil
 }
 
-func processAppend(n *Node, app raft.MsgStorageAppend) error {
+func processAppend(n *Node, rd raft.StorageReady) error {
 	// TODO(tbg): the order of operations here is not necessarily safe. See:
 	// https://github.com/etcd-io/etcd/pull/10861
 	s := n.Storage
-	if st := app.HardState; !raft.IsEmptyHardState(st) {
+	if st := rd.HardState; !raft.IsEmptyHardState(st) {
 		if err := s.SetHardState(st); err != nil {
 			return err
 		}
 	}
-	if snap := app.Snapshot; !raft.IsEmptySnap(snap) {
-		if len(app.Entries) > 0 {
+	if snap := rd.Snapshot; !raft.IsEmptySnap(snap) {
+		if len(rd.Entries) > 0 {
 			return errors.New("can't apply snapshot and entries at the same time")
 		}
 		return s.ApplySnapshot(snap)
 	}
-	return s.Append(app.Entries)
+	return s.Append(rd.Entries)
 }

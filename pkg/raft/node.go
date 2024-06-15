@@ -86,9 +86,9 @@ func (s StorageReady) Empty() bool {
 // in order, and the Responses addressed to this node must be sent in this
 // order, correspondingly.
 type ApplyReady struct {
-	// Entries contains committed entries to be applied to the state machine.
-	// These have previously been appended to stable storage.
-	Entries []pb.Entry
+	// CommittedEntries contains committed entries to be applied to the state
+	// machine. These have previously been appended to stable storage.
+	CommittedEntries []pb.Entry
 	// Responses contains messages to be sent after Entries are applied.
 	// TODO(pav-kv): currently it contains only one response, make it typed.
 	Responses []pb.Message
@@ -101,12 +101,12 @@ type Ready struct {
 	// no update. It is not required to consume or store SoftState.
 	*SoftState
 
-	// Append encapsulates the state that must be persisted to stable storage, and
-	// messages to send after the state is persisted.
-	Storage StorageReady
-	// Apply encapsulates the committed entries that can be applied to state
+	// StorageReady encapsulates the state that must be persisted to stable
+	// storage, and messages to send after the state is persisted.
+	StorageReady
+	// ApplyReady encapsulates the committed entries that can be applied to state
 	// machine, and messages to send after the application is completed.
-	Apply ApplyReady
+	ApplyReady
 
 	// Messages specifies outbound messages. The messages can be sent immediately.
 	//
@@ -424,11 +424,7 @@ func (n *node) run() {
 			n.rn.Tick()
 		case readyc <- rd:
 			n.rn.acceptReady(rd)
-			if !n.rn.asyncStorageWrites {
-				advancec = n.advancec
-			} else {
-				rd = Ready{}
-			}
+			rd = Ready{}
 			readyc = nil
 		case <-advancec:
 			n.rn.Advance(rd)

@@ -42,8 +42,8 @@ type Node struct {
 	Storage
 
 	Config     *raft.Config
-	AppendWork []raft.MsgStorageAppend
-	ApplyWork  []raft.MsgStorageApply
+	AppendWork []raft.StorageReady
+	ApplyWork  []raft.ApplyReady
 	History    []pb.Snapshot
 }
 

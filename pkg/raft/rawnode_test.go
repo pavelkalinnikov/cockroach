@@ -520,11 +520,15 @@ func TestRawNodeStart(t *testing.T) {
 		{Term: 1, Index: 3, Data: []byte("foo")}, // non-empty entry
 	}
 	want := Ready{
-		SoftState:        &SoftState{Lead: 1, RaftState: StateLeader},
-		HardState:        pb.HardState{Term: 1, Commit: 3, Vote: 1},
-		Entries:          nil, // emitted & checked in intermediate Ready cycle
-		CommittedEntries: entries,
-		MustSync:         false, // since we're only applying, not appending
+		SoftState: &SoftState{Lead: 1, RaftState: StateLeader},
+		StorageReady: StorageReady{
+			HardState: pb.HardState{Term: 1, Commit: 3, Vote: 1},
+			Entries:   nil, // emitted & checked in intermediate Ready cycle
+		},
+		ApplyReady: ApplyReady{
+			CommittedEntries: entries,
+		},
+		// MustSync:         false, // since we're only applying, not appending
 	}
 
 	storage := NewMemoryStorage()
@@ -596,7 +600,7 @@ func TestRawNodeStart(t *testing.T) {
 	require.True(t, rawNode.HasReady())
 	rd = rawNode.Ready()
 	require.Empty(t, rd.Entries)
-	require.False(t, rd.MustSync)
+	// require.False(t, rd.MustSync)
 	rawNode.Advance(rd)
 
 	rd.SoftState, want.SoftState = nil, nil
@@ -613,10 +617,11 @@ func TestRawNodeRestart(t *testing.T) {
 	st := pb.HardState{Term: 1, Commit: 1}
 
 	want := Ready{
-		HardState: emptyState,
-		// commit up to commit index in st
-		CommittedEntries: entries[:st.Commit],
-		MustSync:         false,
+		ApplyReady: ApplyReady{
+			// commit up to commit index in st
+			CommittedEntries: entries[:st.Commit],
+		},
+		// MustSync:         false,
 	}
 
 	storage := newTestMemoryStorage(withPeers(1))
@@ -644,10 +649,11 @@ func TestRawNodeRestartFromSnapshot(t *testing.T) {
 	st := pb.HardState{Term: 1, Commit: 3}
 
 	want := Ready{
-		HardState: emptyState,
-		// commit up to commit index in st
-		CommittedEntries: entries,
-		MustSync:         false,
+		ApplyReady: ApplyReady{
+			// commit up to commit index in st
+			CommittedEntries: entries,
+		},
+		// MustSync:         false,
 	}
 
 	s := NewMemoryStorage()

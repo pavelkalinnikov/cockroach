@@ -42,7 +42,7 @@ func ExampleNode() {
 		}
 
 		saveToDisk(rd.Entries)
-		go applyToStore(rd.CommittedEntries)
+		go applyToStore(rd.Entries)
 		sendMessages(rd.Messages)
 	}
 }

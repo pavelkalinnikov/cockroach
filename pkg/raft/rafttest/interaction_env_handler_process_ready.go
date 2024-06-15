@@ -50,7 +50,7 @@ func (env *InteractionEnv) ProcessReady(idx int) error {
 	env.Output.WriteString(raft.DescribeReady(rd, defaultEntryFormatter))
 
 	if !n.Config.AsyncStorageWrites {
-		if err := processAppend(n, rd.HardState, rd.Entries, rd.Snapshot); err != nil {
+		if err := processAppend(n, rd.StorageReady); err != nil {
 			return err
 		}
 		if err := processApply(n, rd.CommittedEntries); err != nil {
@@ -59,11 +59,11 @@ func (env *InteractionEnv) ProcessReady(idx int) error {
 	}
 
 	env.Messages = append(env.Messages, rd.Messages...)
-	if rd.LogAppend.To != 0 {
-		n.AppendWork = append(n.AppendWork, rd.LogAppend)
+	if !rd.StorageReady.Empty() {
+		n.AppendWork = append(n.AppendWork, rd.StorageReady)
 	}
-	if rd.LogApply.To != 0 {
-		n.ApplyWork = append(n.ApplyWork, rd.LogApply)
+	if len(rd.ApplyReady.CommittedEntries) != 0 {
+		n.ApplyWork = append(n.ApplyWork, rd.ApplyReady)
 	}
 
 	if !n.Config.AsyncStorageWrites {
