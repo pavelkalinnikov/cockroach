@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/raft"
+	"github.com/cockroachdb/cockroach/pkg/raft/raftpb"
 	"github.com/cockroachdb/datadriven"
 )
 
@@ -42,32 +43,74 @@ func (env *InteractionEnv) handleProcessReady(t *testing.T, d datadriven.TestDat
 	return nil
 }
 
+func msgFromStorageReady(rd raft.StorageReady, nodeID uint64) raftpb.Message {
+	return raftpb.Message{
+		Type:      raftpb.MsgStorageAppend,
+		From:      nodeID,
+		To:        raft.LocalAppendThread,
+		Term:      rd.HardState.Term,
+		Vote:      rd.HardState.Vote,
+		Commit:    rd.HardState.Commit,
+		Entries:   rd.Entries,
+		Responses: rd.Responses,
+	}
+}
+
+func msgFromApplyReady(rd raft.ApplyReady, nodeID uint64) raftpb.Message {
+	return raftpb.Message{
+		Type:      raftpb.MsgStorageApply,
+		From:      nodeID,
+		To:        raft.LocalApplyThread,
+		Entries:   rd.CommittedEntries,
+		Responses: rd.Responses,
+	}
+}
+
 // ProcessReady runs Ready handling on the node with the given index.
 func (env *InteractionEnv) ProcessReady(idx int) error {
 	// TODO(tbg): Allow simulating crashes here.
 	n := &env.Nodes[idx]
 	rd := n.Ready()
-	env.Output.WriteString(raft.DescribeReady(rd, defaultEntryFormatter))
 
+	toLog := rd
+	if n.Config.AsyncStorageWrites {
+		if st := rd.StorageReady; !st.Empty() {
+			toLog.Messages = append(toLog.Messages, msgFromStorageReady(st, uint64(idx+1)))
+		}
+		if app := rd.ApplyReady; len(app.CommittedEntries) != 0 {
+			toLog.Messages = append(toLog.Messages, msgFromApplyReady(app, uint64(idx+1)))
+		}
+	} else {
+		for _, m := range rd.StorageReady.Responses {
+			if m.To != uint64(idx+1) {
+				toLog.Messages = append(toLog.Messages, m)
+			}
+		}
+	}
+	env.Output.WriteString(raft.DescribeReady(toLog, defaultEntryFormatter))
+
+	env.Messages = append(env.Messages, rd.Messages...)
 	if !n.Config.AsyncStorageWrites {
 		if err := processAppend(n, rd.StorageReady); err != nil {
 			return err
 		}
+		for _, m := range rd.StorageReady.Responses {
+			if m.To != uint64(idx+1) {
+				env.Messages = append(env.Messages, m)
+			}
+		}
 		if err := processApply(n, rd.CommittedEntries); err != nil {
 			return err
 		}
-	}
-
-	env.Messages = append(env.Messages, rd.Messages...)
-	if !rd.StorageReady.Empty() {
-		n.AppendWork = append(n.AppendWork, rd.StorageReady)
-	}
-	if len(rd.ApplyReady.CommittedEntries) != 0 {
-		n.ApplyWork = append(n.ApplyWork, rd.ApplyReady)
-	}
-
-	if !n.Config.AsyncStorageWrites {
 		n.Advance(rd)
+	} else {
+		if !rd.StorageReady.Empty() {
+			n.AppendWork = append(n.AppendWork, rd.StorageReady)
+		}
+		if len(rd.ApplyReady.CommittedEntries) != 0 {
+			n.ApplyWork = append(n.ApplyWork, rd.ApplyReady)
+		}
 	}
+
 	return nil
 }

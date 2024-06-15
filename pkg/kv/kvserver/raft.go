@@ -182,7 +182,7 @@ func logRaftReady(ctx context.Context, ready raft.Ready) {
 		fmt.Fprintf(&buf, "  Outgoing Message[%d]: %.200s\n",
 			i, raftDescribeMessage(m, raftEntryFormatter))
 	}
-	log.Infof(ctx, "raft ready\n%s", buf.String())
+	log.Infof(ctx, "raft ready (must-sync=%t)\n%s", ready.MustSync(), buf.String())
 }
 
 // This is a fork of raft.DescribeMessage with a tweak to avoid logging

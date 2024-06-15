@@ -169,7 +169,7 @@ stabilize 3
   1->3 MsgApp Term:1 Log:1/14 Commit:17
   DEBUG 3 [logterm: 0, index: 14] rejected MsgApp [logterm: 1, index: 14] from 1
 > 3 handling Ready
-  Ready MustSync=false:
+  Ready MustSync=true:
   Messages:
   3->1 MsgAppResp Term:1 Log:1/14 Rejected (Hint: 11)
 

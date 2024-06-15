@@ -81,6 +81,11 @@ func (s StorageReady) Empty() bool {
 		len(s.Entries) == 0 && len(s.Responses) == 0
 }
 
+// MustSync returns whether the log must be synced.
+func (s StorageReady) MustSync() bool {
+	return len(s.Responses) != 0
+}
+
 // ApplyReady encapsulates the committed entries that can be applied to state
 // machine, and messages to send after the application is completed.
 //

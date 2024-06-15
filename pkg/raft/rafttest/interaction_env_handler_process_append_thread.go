@@ -57,9 +57,8 @@ func (env *InteractionEnv) ProcessAppendThread(idx int) error {
 	resps := m.Responses
 	m.Responses = nil
 	env.Output.WriteString("Processing:\n")
-	// FIXME
-	// env.Output.WriteString(raft.DescribeMessage(m, defaultEntryFormatter) + "\n")
-	env.Output.WriteString(fmt.Sprintf("%+v", m))
+	env.Output.WriteString(
+		raft.DescribeMessage(msgFromStorageReady(m, uint64(idx+1)), defaultEntryFormatter) + "\n")
 
 	if err := processAppend(n, m); err != nil {
 		return err

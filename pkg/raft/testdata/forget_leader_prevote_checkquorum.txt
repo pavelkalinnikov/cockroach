@@ -34,7 +34,7 @@ INFO 3 [logterm: 1, index: 11] sent MsgPreVote request to 2 at term 1
 stabilize 3
 ----
 > 3 handling Ready
-  Ready MustSync=false:
+  Ready MustSync=true:
   Lead:0 State:StatePreCandidate
   Messages:
   3->1 MsgPreVote Term:2 Log:1/11
@@ -107,7 +107,7 @@ INFO 3 [logterm: 1, index: 11] sent MsgPreVote request to 2 at term 1
 stabilize 3
 ----
 > 3 handling Ready
-  Ready MustSync=false:
+  Ready MustSync=true:
   Lead:0 State:StatePreCandidate
   Messages:
   3->1 MsgPreVote Term:2 Log:1/11
@@ -124,7 +124,7 @@ stabilize 2
   3->2 MsgPreVote Term:2 Log:1/11
   INFO 2 [logterm: 1, index: 11, vote: 1] cast MsgPreVote for 3 [logterm: 1, index: 11] at term 1
 > 2 handling Ready
-  Ready MustSync=false:
+  Ready MustSync=true:
   Messages:
   2->3 MsgPreVoteResp Term:2 Log:0/0
 
@@ -203,7 +203,7 @@ INFO 1 [logterm: 2, index: 12] sent MsgPreVote request to 3 at term 2
 
 process-ready 1
 ----
-Ready MustSync=false:
+Ready MustSync=true:
 Lead:0 State:StatePreCandidate
 Messages:
 1->2 MsgPreVote Term:3 Log:2/12
@@ -220,7 +220,7 @@ stabilize 2
   1->2 MsgPreVote Term:3 Log:2/12
   INFO 2 [logterm: 2, index: 13, vote: 3] rejected MsgPreVote from 1 [logterm: 2, index: 12] at term 2
 > 2 handling Ready
-  Ready MustSync=false:
+  Ready MustSync=true:
   Messages:
   2->1 MsgPreVoteResp Term:2 Log:0/0 Rejected (Hint: 0)
 

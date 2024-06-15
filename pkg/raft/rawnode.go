@@ -173,7 +173,7 @@ func newStorageAppendMsg(rn *RawNode) StorageReady {
 	// handling to use a fast-path in r.raftLog.term() before the newly appended
 	// entries are removed from the unstable log.
 	rd.Responses = r.msgsAfterAppend
-	if needStorageAppendRespMsg(r, rd) {
+	if !rd.Empty() && needStorageAppendRespMsg(r, rd) {
 		rd.Responses = append(rd.Responses, newStorageAppendRespMsg(r, rd))
 	}
 	return rd
@@ -373,10 +373,14 @@ func (rn *RawNode) Advance(rd Ready) {
 		rn.raft.logger.Panicf("Advance must not be called when using AsyncStorageWrites")
 	}
 	for _, m := range rd.StorageReady.Responses {
-		_ = rn.raft.Step(m)
+		if m.To == rn.raft.id {
+			_ = rn.raft.Step(m)
+		}
 	}
 	for _, m := range rd.ApplyReady.Responses {
-		_ = rn.raft.Step(m)
+		if m.To == rn.raft.id {
+			_ = rn.raft.Step(m)
+		}
 	}
 }
 
