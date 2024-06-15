@@ -207,7 +207,7 @@ LIMIT
 
 		stats := &logstore.AppendStats{}
 
-		app := raft.MsgStorageAppend{
+		app := raft.StorageReady{
 			HardState: raftpb.HardState{
 				Term:   lastTerm,
 				Commit: uint64(lastIndex) + uint64(len(ents)),

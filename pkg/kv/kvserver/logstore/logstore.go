@@ -134,11 +134,7 @@ func newStoreEntriesBatch(eng storage.Engine) storage.Batch {
 // Accepts the state of the log before the operation, returns the state after.
 // Persists HardState atomically with, or strictly after Entries.
 func (s *LogStore) StoreEntries(
-	ctx context.Context,
-	state RaftState,
-	m raft.MsgStorageAppend,
-	cb SyncCallback,
-	stats *AppendStats,
+	ctx context.Context, state RaftState, m raft.StorageReady, cb SyncCallback, stats *AppendStats,
 ) (RaftState, error) {
 	batch := newStoreEntriesBatch(s.Engine)
 	return s.storeEntriesAndCommitBatch(ctx, state, m, cb, stats, batch)
@@ -149,7 +145,7 @@ func (s *LogStore) StoreEntries(
 func (s *LogStore) storeEntriesAndCommitBatch(
 	ctx context.Context,
 	state RaftState,
-	m raft.MsgStorageAppend,
+	m raft.StorageReady,
 	cb SyncCallback,
 	stats *AppendStats,
 	batch storage.Batch,

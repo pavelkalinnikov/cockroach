@@ -220,7 +220,7 @@ func (l *raftLog) hasNextOrInProgressUnstableEnts() bool {
 // appended them to the local raft log yet. If allowUnstable is true, committed
 // entries from the unstable log may be returned; otherwise, only entries known
 // to reside locally on stable storage will be returned.
-func (l *raftLog) nextCommittedEnts(allowUnstable bool) (ents []pb.Entry) {
+func (l *raftLog) nextCommittedEnts() (ents []pb.Entry) {
 	if l.applyingEntsPaused {
 		// Entry application outstanding size limit reached.
 		return nil
@@ -229,7 +229,7 @@ func (l *raftLog) nextCommittedEnts(allowUnstable bool) (ents []pb.Entry) {
 		// See comment in hasNextCommittedEnts.
 		return nil
 	}
-	lo, hi := l.applying+1, l.maxAppliableIndex(allowUnstable)+1 // [lo, hi)
+	lo, hi := l.applying+1, l.maxAppliableIndex()+1 // [lo, hi)
 	if lo >= hi {
 		// Nothing to apply.
 		return nil
@@ -248,7 +248,7 @@ func (l *raftLog) nextCommittedEnts(allowUnstable bool) (ents []pb.Entry) {
 
 // hasNextCommittedEnts returns if there is any available entries for execution.
 // This is a fast check without heavy raftLog.slice() in nextCommittedEnts().
-func (l *raftLog) hasNextCommittedEnts(allowUnstable bool) bool {
+func (l *raftLog) hasNextCommittedEnts() bool {
 	if l.applyingEntsPaused {
 		// Entry application outstanding size limit reached.
 		return false
@@ -259,7 +259,7 @@ func (l *raftLog) hasNextCommittedEnts(allowUnstable bool) bool {
 		// first.
 		return false
 	}
-	lo, hi := l.applying+1, l.maxAppliableIndex(allowUnstable)+1 // [lo, hi)
+	lo, hi := l.applying+1, l.maxAppliableIndex()+1 // [lo, hi)
 	return lo < hi
 }
 
@@ -267,12 +267,8 @@ func (l *raftLog) hasNextCommittedEnts(allowUnstable bool) bool {
 // If allowUnstable is true, committed entries from the unstable log can be
 // applied; otherwise, only entries known to reside locally on stable storage
 // can be applied.
-func (l *raftLog) maxAppliableIndex(allowUnstable bool) uint64 {
-	hi := l.committed
-	if !allowUnstable {
-		hi = min(hi, l.unstable.offset-1)
-	}
-	return hi
+func (l *raftLog) maxAppliableIndex() uint64 {
+	return min(l.committed, l.unstable.offset-1)
 }
 
 // nextUnstableSnapshot returns the snapshot, if present, that is available to
@@ -347,7 +343,7 @@ func (l *raftLog) appliedTo(i uint64, size entryEncodingSize) {
 	l.applyingEntsPaused = l.applyingEntsSize >= l.maxApplyingEntsSize
 }
 
-func (l *raftLog) acceptApplying(i uint64, size entryEncodingSize, allowUnstable bool) {
+func (l *raftLog) acceptApplying(i uint64, size entryEncodingSize) {
 	if l.committed < i {
 		l.logger.Panicf("applying(%d) is out of range [prevApplying(%d), committed(%d)]", i, l.applying, l.committed)
 	}
@@ -364,7 +360,7 @@ func (l *raftLog) acceptApplying(i uint64, size entryEncodingSize, allowUnstable
 	//    not equal, then the returned entries slice must have been truncated to
 	//    adhere to the memory limit.
 	l.applyingEntsPaused = l.applyingEntsSize >= l.maxApplyingEntsSize ||
-		i < l.maxAppliableIndex(allowUnstable)
+		i < l.maxAppliableIndex()
 }
 
 func (l *raftLog) stableTo(id entryID) { l.unstable.stableTo(id) }

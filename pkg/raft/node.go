@@ -49,89 +49,70 @@ func (a *SoftState) equal(b *SoftState) bool {
 	return a.Lead == b.Lead && a.RaftState == b.RaftState
 }
 
-// Ready encapsulates the entries and messages that are ready to read,
-// be saved to stable storage, committed or sent to other peers.
-// All fields in Ready are read-only.
-type Ready struct {
-	// The current volatile state of a Node.
-	// SoftState will be nil if there is no update.
-	// It is not required to consume or store SoftState.
-	*SoftState
-
-	// The current state of a Node to be saved to stable storage BEFORE
-	// Messages are sent.
-	//
-	// HardState will be equal to empty state if there is no update.
-	//
-	// If async storage writes are enabled, this field does not need to be acted
-	// on immediately. It will be reflected in a MsgStorageAppend message in the
-	// Messages slice.
+// StorageReady encapsulates the state that must be persisted to stable storage,
+// and messages to send after the state is persisted.
+//
+// Consecutive StorageReady updates received by the upstream code must be
+// written in order, and the Responses addressed to this node must be sent in
+// this order, correspondingly.
+type StorageReady struct {
+	// HardState is the current state of a Node to be saved to stable storage.
+	// Empty is there is no update.
 	pb.HardState
-
-	// Entries specifies entries to be saved to stable storage BEFORE
-	// Messages are sent.
-	//
-	// If async storage writes are enabled, this field does not need to be acted
-	// on immediately. It will be reflected in a MsgStorageAppend message in the
-	// Messages slice.
-	Entries []pb.Entry
-
-	// Snapshot specifies the snapshot to be saved to stable storage.
-	//
-	// If async storage writes are enabled, this field does not need to be acted
-	// on immediately. It will be reflected in a MsgStorageAppend message in the
-	// Messages slice.
+	// Snapshot is the snapshot to be saved to stable storage. If not empty, must
+	// be saved before Entries.
 	Snapshot pb.Snapshot
-
-	// CommittedEntries specifies entries to be committed to a
-	// store/state-machine. These have previously been appended to stable
-	// storage.
+	// Entries contains log entries to be saved to stable storage.
+	Entries []pb.Entry
+	// Responses contains messages to be sent after all non-empty updates above
+	// are persisted to stable storage.
 	//
-	// If async storage writes are enabled, this field does not need to be acted
-	// on immediately. It will be reflected in a MsgStorageApply message in the
-	// Messages slice.
-	CommittedEntries []pb.Entry
-
-	// Messages specifies outbound messages.
-	//
-	// If async storage writes are not enabled, these messages must be sent
-	// AFTER Entries are appended to stable storage.
-	//
-	// If async storage writes are enabled, these messages can be sent
-	// immediately as the messages that have the completion of the async writes
-	// as a precondition are attached to the individual MsgStorage{Append,Apply}
-	// messages instead.
-	//
-	// If it contains a MsgSnap message, the application MUST report back to raft
-	// when the snapshot has been received or has failed by calling ReportSnapshot.
-	Messages []pb.Message
-
-	LogAppend MsgStorageAppend
-	LogApply  MsgStorageApply
-
-	// MustSync indicates whether the HardState and Entries must be durably
-	// written to disk or if a non-durable write is permissible.
-	MustSync bool
+	// If Responses is not empty, the writes must be synced before these Responses
+	// are sent. If there are no updates, but Responses is not empty, this
+	// schedules a storage sync, after which the Responses are sent.
+	Responses []pb.Message
 }
 
-type AsyncReady struct {
-	// The current volatile state of a Node.
-	// SoftState will be nil if there is no update.
-	// It is not required to consume or store SoftState.
+// Empty returns true iff there StorageReady contains nothing.
+func (s StorageReady) Empty() bool {
+	return IsEmptyHardState(s.HardState) && IsEmptySnap(s.Snapshot) &&
+		len(s.Entries) == 0 && len(s.Responses) == 0
+}
+
+// ApplyReady encapsulates the committed entries that can be applied to state
+// machine, and messages to send after the application is completed.
+//
+// Consecutive ApplyReady updates received by the upstream code must be applied
+// in order, and the Responses addressed to this node must be sent in this
+// order, correspondingly.
+type ApplyReady struct {
+	// Entries contains committed entries to be applied to the state machine.
+	// These have previously been appended to stable storage.
+	Entries []pb.Entry
+	// Responses contains messages to be sent after Entries are applied.
+	// TODO(pav-kv): currently it contains only one response, make it typed.
+	Responses []pb.Message
+}
+
+// Ready encapsulates the pending updates to stable storage, state machine, and
+// messages that can be sent to raft peers. All fields are read-only.
+type Ready struct {
+	// SoftState is the current volatile state of a Node. Can be nil if there is
+	// no update. It is not required to consume or store SoftState.
 	*SoftState
 
-	// Messages specifies outbound messages.
-	//
-	// The messages can be sent immediately as the messages that have the
-	// completion of the async writes as a precondition are attached to the
-	// individual MsgStorage{Append,Apply} messages instead.
+	// Append encapsulates the state that must be persisted to stable storage, and
+	// messages to send after the state is persisted.
+	Storage StorageReady
+	// Apply encapsulates the committed entries that can be applied to state
+	// machine, and messages to send after the application is completed.
+	Apply ApplyReady
+
+	// Messages specifies outbound messages. The messages can be sent immediately.
 	//
 	// If it contains a MsgSnap message, the application MUST report back to raft
 	// when the snapshot has been received or has failed by calling ReportSnapshot.
 	Messages []pb.Message
-
-	LogAppend MsgStorageAppend
-	LogApply  MsgStorageApply
 }
 
 func isHardStateEqual(a, b pb.HardState) bool {

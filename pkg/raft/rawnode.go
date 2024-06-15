@@ -125,86 +125,24 @@ func (rn *RawNode) Ready() Ready {
 	return rd
 }
 
-func (rn *RawNode) AsyncReady() AsyncReady {
-	rd := rn.readyWithoutAccept()
-	rn.acceptReady(rd)
-	return AsyncReady{
-		SoftState: rd.SoftState,
-		Messages:  rd.Messages,
-		LogAppend: rd.LogAppend,
-		LogApply:  rd.LogApply,
-	}
-}
-
 // readyWithoutAccept returns a Ready. This is a read-only operation, i.e. there
 // is no obligation that the Ready must be handled.
 func (rn *RawNode) readyWithoutAccept() Ready {
 	r := rn.raft
-
 	rd := Ready{
-		Entries:          r.raftLog.nextUnstableEnts(),
-		CommittedEntries: r.raftLog.nextCommittedEnts(rn.applyUnstableEntries()),
-		Messages:         r.msgs,
+		Storage:  newStorageAppendMsg(r),
+		Apply:    newStorageApplyMsg(r),
+		Messages: r.msgs,
 	}
 	if softSt := r.softState(); !softSt.equal(rn.prevSoftSt) {
 		// Allocate only when SoftState changes.
 		escapingSoftSt := softSt
 		rd.SoftState = &escapingSoftSt
 	}
-	if hardSt := r.hardState(); !isHardStateEqual(hardSt, rn.prevHardSt) {
-		rd.HardState = hardSt
-	}
-	if r.raftLog.hasNextUnstableSnapshot() {
-		rd.Snapshot = *r.raftLog.nextUnstableSnapshot()
-	}
-	rd.MustSync = MustSync(r.hardState(), rn.prevHardSt, len(rd.Entries))
-
-	if rn.asyncStorageWrites {
-		// If async storage writes are enabled, enqueue messages to
-		// local storage threads, where applicable.
-		if needStorageAppendMsg(r, rd) {
-			rd.LogAppend = newStorageAppendMsg(r, rd)
-		}
-		if needStorageApplyMsg(rd) {
-			rd.LogApply = newStorageApplyMsg(r, rd)
-		}
-	} else {
-		// If async storage writes are disabled, immediately enqueue
-		// msgsAfterAppend to be sent out. The Ready struct contract
-		// mandates that Messages cannot be sent until after Entries
-		// are written to stable storage.
-		for _, m := range r.msgsAfterAppend {
-			if m.To != r.id {
-				rd.Messages = append(rd.Messages, m)
-			}
-		}
-	}
-
 	return rd
 }
 
-// MustSync returns true if the hard state and count of Raft entries indicate
-// that a synchronous write to persistent storage is required.
-func MustSync(st, prevst pb.HardState, entsnum int) bool {
-	// Persistent state on all servers:
-	// (Updated on stable storage before responding to RPCs)
-	// currentTerm
-	// votedFor
-	// log entries[]
-	return entsnum != 0 || st.Vote != prevst.Vote || st.Term != prevst.Term
-}
-
-func needStorageAppendMsg(r *raft, rd Ready) bool {
-	// Return true if log entries, hard state, or a snapshot need to be written
-	// to stable storage. Also return true if any messages are contingent on all
-	// prior MsgStorageAppend being processed.
-	return len(rd.Entries) > 0 ||
-		!IsEmptyHardState(rd.HardState) ||
-		!IsEmptySnap(rd.Snapshot) ||
-		len(r.msgsAfterAppend) > 0
-}
-
-func needStorageAppendRespMsg(r *raft, rd Ready) bool {
+func needStorageAppendRespMsg(r *raft, rd StorageReady) bool {
 	// Return true if raft needs to hear about stabilized entries or an applied
 	// snapshot. See the comment in newStorageAppendRespMsg, which explains why
 	// we check hasNextOrInProgressUnstableEnts instead of len(rd.Entries) > 0.
@@ -212,25 +150,18 @@ func needStorageAppendRespMsg(r *raft, rd Ready) bool {
 		!IsEmptySnap(rd.Snapshot)
 }
 
-type MsgStorageAppend struct {
-	To        uint64
-	HardState pb.HardState
-	Snapshot  pb.Snapshot
-	Entries   []pb.Entry
-	Responses []pb.Message
-}
-
 // newStorageAppendMsg creates the message that should be sent to the local
 // append thread to instruct it to append log entries, write an updated hard
 // state, and apply a snapshot. The message also carries a set of responses
 // that should be delivered after the rest of the message is processed. Used
 // with AsyncStorageWrites.
-func newStorageAppendMsg(r *raft, rd Ready) MsgStorageAppend {
-	m := MsgStorageAppend{
-		To:        r.id,
-		HardState: rd.HardState,
-		Snapshot:  rd.Snapshot,
-		Entries:   rd.Entries,
+func newStorageAppendMsg(r *raft) StorageReady {
+	rd := StorageReady{
+		HardState: r.hardState(),
+		Entries:   r.raftLog.nextUnstableEnts(),
+	}
+	if r.raftLog.hasNextUnstableSnapshot() {
+		rd.Snapshot = *r.raftLog.nextUnstableSnapshot()
 	}
 	// Attach all messages in msgsAfterAppend as responses to be delivered after
 	// the message is processed, along with a self-directed MsgStorageAppendResp
@@ -241,18 +172,18 @@ func newStorageAppendMsg(r *raft, rd Ready) MsgStorageAppend {
 	// be contained in msgsAfterAppend). This ordering allows the MsgAppResp
 	// handling to use a fast-path in r.raftLog.term() before the newly appended
 	// entries are removed from the unstable log.
-	m.Responses = r.msgsAfterAppend
+	rd.Responses = r.msgsAfterAppend
 	if needStorageAppendRespMsg(r, rd) {
-		m.Responses = append(m.Responses, newStorageAppendRespMsg(r, rd))
+		rd.Responses = append(rd.Responses, newStorageAppendRespMsg(r, rd))
 	}
-	return m
+	return rd
 }
 
 // newStorageAppendRespMsg creates the message that should be returned to node
 // after the unstable log entries, hard state, and snapshot in the current Ready
 // (along with those in all prior Ready structs) have been saved to stable
 // storage.
-func newStorageAppendRespMsg(r *raft, rd Ready) pb.Message {
+func newStorageAppendRespMsg(r *raft, rd StorageReady) pb.Message {
 	m := pb.Message{
 		Type: pb.MsgStorageAppendResp,
 		To:   r.id,
@@ -352,27 +283,15 @@ func newStorageAppendRespMsg(r *raft, rd Ready) pb.Message {
 	return m
 }
 
-func needStorageApplyMsg(rd Ready) bool     { return len(rd.CommittedEntries) > 0 }
-func needStorageApplyRespMsg(rd Ready) bool { return needStorageApplyMsg(rd) }
-
-type MsgStorageApply struct {
-	To        uint64
-	Entries   []pb.Entry
-	Responses []pb.Message
-}
-
 // newStorageApplyMsg creates the message that should be sent to the local
 // apply thread to instruct it to apply committed log entries. The message
 // also carries a response that should be delivered after the rest of the
 // message is processed. Used with AsyncStorageWrites.
-func newStorageApplyMsg(r *raft, rd Ready) MsgStorageApply {
-	entries := rd.CommittedEntries
-	return MsgStorageApply{
-		To:      r.id,
-		Entries: entries,
-		Responses: []pb.Message{
-			newStorageApplyRespMsg(r, entries),
-		},
+func newStorageApplyMsg(r *raft) ApplyReady {
+	entries := r.raftLog.nextCommittedEnts()
+	return ApplyReady{
+		Entries:   entries,
+		Responses: []pb.Message{newStorageApplyRespMsg(r, entries)},
 	}
 }
 
@@ -396,42 +315,16 @@ func (rn *RawNode) acceptReady(rd Ready) {
 	if rd.SoftState != nil {
 		rn.prevSoftSt = rd.SoftState
 	}
-	if !IsEmptyHardState(rd.HardState) {
-		rn.prevHardSt = rd.HardState
-	}
-	if !rn.asyncStorageWrites {
-		if len(rn.stepsOnAdvance) != 0 {
-			rn.raft.logger.Panicf("two accepted Ready structs without call to Advance")
-		}
-		for _, m := range rn.raft.msgsAfterAppend {
-			if m.To == rn.raft.id {
-				rn.stepsOnAdvance = append(rn.stepsOnAdvance, m)
-			}
-		}
-		if needStorageAppendRespMsg(rn.raft, rd) {
-			m := newStorageAppendRespMsg(rn.raft, rd)
-			rn.stepsOnAdvance = append(rn.stepsOnAdvance, m)
-		}
-		if needStorageApplyRespMsg(rd) {
-			m := newStorageApplyRespMsg(rn.raft, rd.CommittedEntries)
-			rn.stepsOnAdvance = append(rn.stepsOnAdvance, m)
-		}
+	if !IsEmptyHardState(rd.Storage.HardState) {
+		rn.prevHardSt = rd.Storage.HardState
 	}
 	rn.raft.msgs = nil
 	rn.raft.msgsAfterAppend = nil
 	rn.raft.raftLog.acceptUnstable()
-	if len(rd.CommittedEntries) > 0 {
-		ents := rd.CommittedEntries
-		index := ents[len(ents)-1].Index
-		rn.raft.raftLog.acceptApplying(index, entsSize(ents), rn.applyUnstableEntries())
+	if committed := rd.Apply.Entries; len(committed) > 0 {
+		index := committed[len(committed)-1].Index
+		rn.raft.raftLog.acceptApplying(index, entsSize(committed))
 	}
-}
-
-// applyUnstableEntries returns whether entries are allowed to be applied once
-// they are known to be committed but before they have been written locally to
-// stable storage.
-func (rn *RawNode) applyUnstableEntries() bool {
-	return !rn.asyncStorageWrites
 }
 
 // HasReady called when RawNode user need to check if any Ready pending.
@@ -450,7 +343,7 @@ func (rn *RawNode) HasReady() bool {
 	if len(r.msgs) > 0 || len(r.msgsAfterAppend) > 0 {
 		return true
 	}
-	if r.raftLog.hasNextUnstableEnts() || r.raftLog.hasNextCommittedEnts(rn.applyUnstableEntries()) {
+	if r.raftLog.hasNextUnstableEnts() || r.raftLog.hasNextCommittedEnts() {
 		return true
 	}
 	return false

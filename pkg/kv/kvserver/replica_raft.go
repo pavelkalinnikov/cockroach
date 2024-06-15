@@ -801,7 +801,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	}
 
 	var hasReady bool
-	var rd raft.AsyncReady
+	var rd raft.Ready
 	r.mu.Lock()
 	state := logstore.RaftState{ // used for append below
 		LastIndex: r.mu.lastIndexNotDurable,
@@ -826,7 +826,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 			// flow control struct down the stack, and do a more complete accounting
 			// in raft. This will also eliminate the "side channel" plumbing hack with
 			// this bytesAccount.
-			rd = raftGroup.AsyncReady()
+			rd = raftGroup.Ready()
 			// We apply committed entries during this handleRaftReady, so it is ok to
 			// release the corresponding memory tokens at the end of this func. Next
 			// time we enter this function, the account will be empty again.
@@ -847,7 +847,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 		unquiesceAndWakeLeader := hasReady || numFlushed > 0 || len(r.mu.proposals) > 0
 		return unquiesceAndWakeLeader, nil
 	})
-	r.mu.applyingEntries = rd.LogApply.To != 0
+	r.mu.applyingEntries = len(rd.Apply.Entries) != 0
 	pausedFollowers := r.mu.pausedFollowers
 	r.mu.Unlock()
 	if errors.Is(err, errRemoved) {
@@ -921,11 +921,11 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	sm := r.getStateMachine()
 	dec := r.getDecoder()
 	var appTask apply.Task
-	if rd.LogApply.To != 0 {
+	if entries := rd.Apply.Entries; len(entries) != 0 {
 		appTask = apply.MakeTask(sm, dec)
 		appTask.SetMaxBatchSize(r.store.TestingKnobs().MaxApplicationBatchSize)
 		defer appTask.Close()
-		if err := appTask.Decode(ctx, rd.LogApply.Entries); err != nil {
+		if err := appTask.Decode(ctx, entries); err != nil {
 			return stats, err
 		}
 		if knobs := r.store.TestingKnobs(); knobs == nil || !knobs.DisableCanAckBeforeApplication {
@@ -935,19 +935,19 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 		}
 	}
 
-	if app := rd.LogAppend; app.To != 0 {
-		if !raft.IsEmptySnap(app.Snapshot) {
+	if store := rd.Storage; !store.Empty() {
+		if !raft.IsEmptySnap(store.Snapshot) {
 			if inSnap.Desc == nil {
 				// If we didn't expect Raft to have a snapshot but it has one
 				// regardless, that is unexpected and indicates a programming
 				// error.
 				return stats, errors.AssertionFailedf(
 					"have inSnap=nil, but raft has a snapshot %s",
-					raft.DescribeSnapshot(app.Snapshot),
+					raft.DescribeSnapshot(store.Snapshot),
 				)
 			}
 
-			snapUUID, err := uuid.FromBytes(app.Snapshot.Data)
+			snapUUID, err := uuid.FromBytes(store.Snapshot.Data)
 			if err != nil {
 				return stats, errors.Wrap(err, "invalid snapshot id")
 			}
@@ -957,7 +957,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 			if snapUUID != inSnap.SnapUUID {
 				log.Fatalf(ctx, "incoming snapshot id doesn't match raft snapshot id: %s != %s", snapUUID, inSnap.SnapUUID)
 			}
-			if len(app.Entries) != 0 {
+			if len(store.Entries) != 0 {
 				log.Fatalf(ctx, "found Entries in MsgStorageAppend with non-empty Snapshot")
 			}
 
@@ -970,16 +970,16 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 			defer releaseMergeLock()
 
 			stats.tSnapBegin = timeutil.Now()
-			if err := r.applySnapshot(ctx, inSnap, app.Snapshot, app.HardState, subsumedRepls); err != nil {
+			if err := r.applySnapshot(ctx, inSnap, store.Snapshot, store.HardState, subsumedRepls); err != nil {
 				return stats, errors.Wrap(err, "while applying snapshot")
 			}
-			for _, msg := range rd.LogAppend.Responses {
+			for _, msg := range store.Responses {
 				// The caller would like to see the MsgAppResp that usually results from
 				// applying the snapshot synchronously, so fish it out.
 				if msg.To == uint64(inSnap.FromReplica.ReplicaID) &&
 					msg.Type == raftpb.MsgAppResp &&
 					!msg.Reject &&
-					msg.Index == app.Snapshot.Metadata.Index {
+					msg.Index == store.Snapshot.Metadata.Index {
 
 					inSnap.msgAppRespCh <- msg
 					break
@@ -1011,10 +1011,10 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 			}
 
 			// Send MsgStorageAppend's responses.
-			r.sendRaftMessages(ctx, rd.LogAppend.Responses, nil /* blocked */, true /* willDeliverLocal */)
+			r.sendRaftMessages(ctx, store.Responses, nil /* blocked */, true /* willDeliverLocal */)
 		} else {
 			// TODO(pavelkalinnikov): find a way to move it to storeEntries.
-			if app.HardState.Commit != 0 && !r.IsInitialized() {
+			if store.HardState.Commit != 0 && !r.IsInitialized() {
 				log.Fatalf(ctx, "setting non-zero HardState.Commit on uninitialized replica %s", r)
 			}
 			// TODO(pavelkalinnikov): construct and store this in Replica.
@@ -1039,7 +1039,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 				// Enqueue raft log entries into admission queues. This is
 				// non-blocking; actual admission happens asynchronously.
 				tenantID, _ := r.TenantID()
-				for _, entry := range rd.LogAppend.Entries {
+				for _, entry := range store.Entries {
 					if len(entry.Data) == 0 {
 						continue // nothing to do
 					}
@@ -1049,7 +1049,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 				}
 			}
 
-			if state, err = s.StoreEntries(ctx, state, app, cb, &stats.append); err != nil {
+			if state, err = s.StoreEntries(ctx, state, store, cb, &stats.append); err != nil {
 				return stats, errors.Wrap(err, "while storing log entries")
 			}
 		}
@@ -1079,8 +1079,8 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	}
 
 	stats.tApplicationBegin = timeutil.Now()
-	if rd.LogApply.To != 0 {
-		r.traceEntries(rd.LogApply.Entries, "committed, before applying any entries")
+	if entries := rd.Apply.Entries; len(entries) != 0 {
+		r.traceEntries(entries, "committed, before applying any entries")
 
 		err := appTask.ApplyCommittedEntries(ctx)
 		stats.apply = sm.moveStats()
@@ -1118,12 +1118,12 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 		}
 
 		// Send MsgStorageApply's responses.
-		r.sendRaftMessages(ctx, rd.LogApply.Responses, nil /* blocked */, true /* willDeliverLocal */)
+		r.sendRaftMessages(ctx, rd.Apply.Responses, nil /* blocked */, true /* willDeliverLocal */)
 	}
 	stats.tApplicationEnd = timeutil.Now()
 	applicationElapsed := stats.tApplicationEnd.Sub(stats.tApplicationBegin).Nanoseconds()
 	r.store.metrics.RaftApplyCommittedLatency.RecordValue(applicationElapsed)
-	r.store.metrics.RaftCommandsApplied.Inc(int64(len(rd.LogApply.Entries)))
+	r.store.metrics.RaftCommandsApplied.Inc(int64(len(rd.Apply.Entries)))
 	if r.store.TestingKnobs().EnableUnconditionalRefreshesInRaftReady {
 		refreshReason = reasonNewLeaderOrConfigChange
 	}

@@ -112,20 +112,20 @@ func DescribeReady(rd Ready, f EntryFormatter) string {
 		fmt.Fprint(&buf, DescribeSoftState(*rd.SoftState))
 		buf.WriteByte('\n')
 	}
-	if !IsEmptyHardState(rd.HardState) {
-		fmt.Fprintf(&buf, "HardState %s", DescribeHardState(rd.HardState))
+	if !IsEmptyHardState(rd.Storage.HardState) {
+		fmt.Fprintf(&buf, "HardState %s", DescribeHardState(rd.Storage.HardState))
 		buf.WriteByte('\n')
 	}
-	if len(rd.Entries) > 0 {
+	if len(rd.Storage.Entries) > 0 {
 		buf.WriteString("Entries:\n")
-		fmt.Fprint(&buf, DescribeEntries(rd.Entries, f))
+		fmt.Fprint(&buf, DescribeEntries(rd.Storage.Entries, f))
 	}
-	if !IsEmptySnap(rd.Snapshot) {
-		fmt.Fprintf(&buf, "Snapshot %s\n", DescribeSnapshot(rd.Snapshot))
+	if !IsEmptySnap(rd.Storage.Snapshot) {
+		fmt.Fprintf(&buf, "Snapshot %s\n", DescribeSnapshot(rd.Storage.Snapshot))
 	}
-	if len(rd.CommittedEntries) > 0 {
+	if len(rd.Apply.Entries) > 0 {
 		buf.WriteString("CommittedEntries:\n")
-		fmt.Fprint(&buf, DescribeEntries(rd.CommittedEntries, f))
+		fmt.Fprint(&buf, DescribeEntries(rd.Apply.Entries, f))
 	}
 	if len(rd.Messages) > 0 {
 		buf.WriteString("Messages:\n")
@@ -135,7 +135,7 @@ func DescribeReady(rd Ready, f EntryFormatter) string {
 		}
 	}
 	if buf.Len() > 0 {
-		return fmt.Sprintf("Ready MustSync=%t:\n%s", rd.MustSync, buf.String())
+		return fmt.Sprintf("Ready:\n%s", buf.String())
 	}
 	return "<empty Ready>"
 }

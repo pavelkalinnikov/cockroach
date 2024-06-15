@@ -154,7 +154,7 @@ func verboseRaftLoggingEnabled() bool {
 	return log.V(5)
 }
 
-func logRaftReady(ctx context.Context, ready raft.AsyncReady) {
+func logRaftReady(ctx context.Context, ready raft.Ready) {
 	if !verboseRaftLoggingEnabled() {
 		return
 	}
@@ -163,18 +163,18 @@ func logRaftReady(ctx context.Context, ready raft.AsyncReady) {
 	if ready.SoftState != nil {
 		fmt.Fprintf(&buf, "  SoftState updated: %+v\n", *ready.SoftState)
 	}
-	if hs := ready.LogAppend.HardState; !raft.IsEmptyHardState(hs) {
+	if hs := ready.Storage.HardState; !raft.IsEmptyHardState(hs) {
 		fmt.Fprintf(&buf, "  HardState updated: %+v\n", hs)
 	}
-	for i, e := range ready.LogAppend.Entries {
+	for i, e := range ready.Storage.Entries {
 		fmt.Fprintf(&buf, "  New Entry[%d]: %.200s\n",
 			i, raft.DescribeEntry(e, raftEntryFormatter))
 	}
-	for i, e := range ready.LogApply.Entries {
+	for i, e := range ready.Apply.Entries {
 		fmt.Fprintf(&buf, "  Committed Entry[%d]: %.200s\n",
 			i, raft.DescribeEntry(e, raftEntryFormatter))
 	}
-	if snap := ready.LogAppend.Snapshot; !raft.IsEmptySnap(snap) {
+	if snap := ready.Storage.Snapshot; !raft.IsEmptySnap(snap) {
 		snap.Data = nil
 		fmt.Fprintf(&buf, "  Snapshot updated: %v\n", snap)
 	}
