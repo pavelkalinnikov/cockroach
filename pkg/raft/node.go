@@ -106,9 +106,32 @@ type Ready struct {
 	// when the snapshot has been received or has failed by calling ReportSnapshot.
 	Messages []pb.Message
 
+	LogAppend MsgStorageAppend
+	LogApply  MsgStorageApply
+
 	// MustSync indicates whether the HardState and Entries must be durably
 	// written to disk or if a non-durable write is permissible.
 	MustSync bool
+}
+
+type AsyncReady struct {
+	// The current volatile state of a Node.
+	// SoftState will be nil if there is no update.
+	// It is not required to consume or store SoftState.
+	*SoftState
+
+	// Messages specifies outbound messages.
+	//
+	// The messages can be sent immediately as the messages that have the
+	// completion of the async writes as a precondition are attached to the
+	// individual MsgStorage{Append,Apply} messages instead.
+	//
+	// If it contains a MsgSnap message, the application MUST report back to raft
+	// when the snapshot has been received or has failed by calling ReportSnapshot.
+	Messages []pb.Message
+
+	LogAppend MsgStorageAppend
+	LogApply  MsgStorageApply
 }
 
 func isHardStateEqual(a, b pb.HardState) bool {

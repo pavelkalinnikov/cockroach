@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/raft"
-	"github.com/cockroachdb/cockroach/pkg/raft/raftpb"
 	"github.com/cockroachdb/datadriven"
 )
 
@@ -59,16 +58,8 @@ func (env *InteractionEnv) ProcessAppendThread(idx int) error {
 	m.Responses = nil
 	env.Output.WriteString("Processing:\n")
 	env.Output.WriteString(raft.DescribeMessage(m, defaultEntryFormatter) + "\n")
-	st := raftpb.HardState{
-		Term:   m.Term,
-		Vote:   m.Vote,
-		Commit: m.Commit,
-	}
-	var snap raftpb.Snapshot
-	if m.Snapshot != nil {
-		snap = *m.Snapshot
-	}
-	if err := processAppend(n, st, m.Entries, snap); err != nil {
+
+	if err := processAppend(n, m); err != nil {
 		return err
 	}
 
@@ -80,20 +71,20 @@ func (env *InteractionEnv) ProcessAppendThread(idx int) error {
 	return nil
 }
 
-func processAppend(n *Node, st raftpb.HardState, ents []raftpb.Entry, snap raftpb.Snapshot) error {
+func processAppend(n *Node, app raft.MsgStorageAppend) error {
 	// TODO(tbg): the order of operations here is not necessarily safe. See:
 	// https://github.com/etcd-io/etcd/pull/10861
 	s := n.Storage
-	if !raft.IsEmptyHardState(st) {
+	if st := app.HardState; !raft.IsEmptyHardState(st) {
 		if err := s.SetHardState(st); err != nil {
 			return err
 		}
 	}
-	if !raft.IsEmptySnap(snap) {
-		if len(ents) > 0 {
+	if snap := app.Snapshot; !raft.IsEmptySnap(snap) {
+		if len(app.Entries) > 0 {
 			return errors.New("can't apply snapshot and entries at the same time")
 		}
 		return s.ApplySnapshot(snap)
 	}
-	return s.Append(ents)
+	return s.Append(app.Entries)
 }

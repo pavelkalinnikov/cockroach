@@ -801,9 +801,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	}
 
 	var hasReady bool
-	var softState *raft.SoftState
-	var outboundMsgs []raftpb.Message
-	var msgStorageAppend, msgStorageApply raftpb.Message
+	var rd raft.AsyncReady
 	r.mu.Lock()
 	state := logstore.RaftState{ // used for append below
 		LastIndex: r.mu.lastIndexNotDurable,
@@ -828,16 +826,11 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 			// flow control struct down the stack, and do a more complete accounting
 			// in raft. This will also eliminate the "side channel" plumbing hack with
 			// this bytesAccount.
-			syncRd := raftGroup.Ready()
+			rd = raftGroup.AsyncReady()
 			// We apply committed entries during this handleRaftReady, so it is ok to
 			// release the corresponding memory tokens at the end of this func. Next
 			// time we enter this function, the account will be empty again.
 			defer r.detachRaftEntriesMonitorRaftMuLocked()
-
-			logRaftReady(ctx, syncRd)
-			asyncRd := makeAsyncReady(syncRd)
-			softState = asyncRd.SoftState
-			outboundMsgs, msgStorageAppend, msgStorageApply = splitLocalStorageMsgs(asyncRd.Messages)
 		}
 		// We unquiesce if we have a Ready (= there's work to do). We also have
 		// to unquiesce if we just flushed some proposals but there isn't a
@@ -854,7 +847,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 		unquiesceAndWakeLeader := hasReady || numFlushed > 0 || len(r.mu.proposals) > 0
 		return unquiesceAndWakeLeader, nil
 	})
-	r.mu.applyingEntries = hasMsg(msgStorageApply)
+	r.mu.applyingEntries = rd.LogApply.To != 0
 	pausedFollowers := r.mu.pausedFollowers
 	r.mu.Unlock()
 	if errors.Is(err, errRemoved) {
@@ -875,9 +868,10 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 		r.updateProposalQuotaRaftMuLocked(ctx, lastLeaderID)
 		return stats, nil
 	}
+	logRaftReady(ctx, rd)
 
 	refreshReason := noReason
-	if softState != nil && leaderID != roachpb.ReplicaID(softState.Lead) {
+	if rd.SoftState != nil && leaderID != roachpb.ReplicaID(rd.SoftState.Lead) {
 		// Refresh pending commands if the Raft leader has changed. This is usually
 		// the first indication we have of a new leader on a restarted node.
 		//
@@ -886,16 +880,16 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 		// indicating a newly elected leader or a conf change. Replay protection
 		// prevents any corruption, so the waste is only a performance issue.
 		if log.V(3) {
-			log.Infof(ctx, "raft leader changed: %d -> %d", leaderID, softState.Lead)
+			log.Infof(ctx, "raft leader changed: %d -> %d", leaderID, rd.Lead)
 		}
 		if !r.store.TestingKnobs().DisableRefreshReasonNewLeader {
 			refreshReason = reasonNewLeader
 		}
-		leaderID = roachpb.ReplicaID(softState.Lead)
+		leaderID = roachpb.ReplicaID(rd.Lead)
 	}
 
-	r.traceMessageSends(outboundMsgs, "sending messages")
-	r.sendRaftMessages(ctx, outboundMsgs, pausedFollowers, true /* willDeliverLocal */)
+	r.traceMessageSends(rd.Messages, "sending messages")
+	r.sendRaftMessages(ctx, rd.Messages, pausedFollowers, true /* willDeliverLocal */)
 
 	// If the ready struct includes entries that have been committed, these
 	// entries will be applied to the Replica's replicated state machine down
@@ -927,11 +921,11 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	sm := r.getStateMachine()
 	dec := r.getDecoder()
 	var appTask apply.Task
-	if hasMsg(msgStorageApply) {
+	if rd.LogApply.To != 0 {
 		appTask = apply.MakeTask(sm, dec)
 		appTask.SetMaxBatchSize(r.store.TestingKnobs().MaxApplicationBatchSize)
 		defer appTask.Close()
-		if err := appTask.Decode(ctx, msgStorageApply.Entries); err != nil {
+		if err := appTask.Decode(ctx, rd.LogApply.Entries); err != nil {
 			return stats, err
 		}
 		if knobs := r.store.TestingKnobs(); knobs == nil || !knobs.DisableCanAckBeforeApplication {
@@ -941,19 +935,19 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 		}
 	}
 
-	if hasMsg(msgStorageAppend) {
-		if msgStorageAppend.Snapshot != nil {
+	if app := rd.LogAppend; app.To != 0 {
+		if !raft.IsEmptySnap(app.Snapshot) {
 			if inSnap.Desc == nil {
 				// If we didn't expect Raft to have a snapshot but it has one
 				// regardless, that is unexpected and indicates a programming
 				// error.
 				return stats, errors.AssertionFailedf(
 					"have inSnap=nil, but raft has a snapshot %s",
-					raft.DescribeSnapshot(*msgStorageAppend.Snapshot),
+					raft.DescribeSnapshot(app.Snapshot),
 				)
 			}
 
-			snapUUID, err := uuid.FromBytes(msgStorageAppend.Snapshot.Data)
+			snapUUID, err := uuid.FromBytes(app.Snapshot.Data)
 			if err != nil {
 				return stats, errors.Wrap(err, "invalid snapshot id")
 			}
@@ -963,14 +957,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 			if snapUUID != inSnap.SnapUUID {
 				log.Fatalf(ctx, "incoming snapshot id doesn't match raft snapshot id: %s != %s", snapUUID, inSnap.SnapUUID)
 			}
-
-			snap := *msgStorageAppend.Snapshot
-			hs := raftpb.HardState{
-				Term:   msgStorageAppend.Term,
-				Vote:   msgStorageAppend.Vote,
-				Commit: msgStorageAppend.Commit,
-			}
-			if len(msgStorageAppend.Entries) != 0 {
+			if len(app.Entries) != 0 {
 				log.Fatalf(ctx, "found Entries in MsgStorageAppend with non-empty Snapshot")
 			}
 
@@ -983,16 +970,16 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 			defer releaseMergeLock()
 
 			stats.tSnapBegin = timeutil.Now()
-			if err := r.applySnapshot(ctx, inSnap, snap, hs, subsumedRepls); err != nil {
+			if err := r.applySnapshot(ctx, inSnap, app.Snapshot, app.HardState, subsumedRepls); err != nil {
 				return stats, errors.Wrap(err, "while applying snapshot")
 			}
-			for _, msg := range msgStorageAppend.Responses {
+			for _, msg := range rd.LogAppend.Responses {
 				// The caller would like to see the MsgAppResp that usually results from
 				// applying the snapshot synchronously, so fish it out.
 				if msg.To == uint64(inSnap.FromReplica.ReplicaID) &&
 					msg.Type == raftpb.MsgAppResp &&
 					!msg.Reject &&
-					msg.Index == snap.Metadata.Index {
+					msg.Index == app.Snapshot.Metadata.Index {
 
 					inSnap.msgAppRespCh <- msg
 					break
@@ -1024,10 +1011,10 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 			}
 
 			// Send MsgStorageAppend's responses.
-			r.sendRaftMessages(ctx, msgStorageAppend.Responses, nil /* blocked */, true /* willDeliverLocal */)
+			r.sendRaftMessages(ctx, rd.LogAppend.Responses, nil /* blocked */, true /* willDeliverLocal */)
 		} else {
 			// TODO(pavelkalinnikov): find a way to move it to storeEntries.
-			if msgStorageAppend.Commit != 0 && !r.IsInitialized() {
+			if app.HardState.Commit != 0 && !r.IsInitialized() {
 				log.Fatalf(ctx, "setting non-zero HardState.Commit on uninitialized replica %s", r)
 			}
 			// TODO(pavelkalinnikov): construct and store this in Replica.
@@ -1047,13 +1034,12 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 				DisableSyncLogWriteToss: buildutil.CrdbTestBuild &&
 					r.store.TestingKnobs().DisableSyncLogWriteToss,
 			}
-			m := logstore.MakeMsgStorageAppend(msgStorageAppend)
 			cb := (*replicaSyncCallback)(r)
 			if r.IsInitialized() && r.store.cfg.KVAdmissionController != nil {
 				// Enqueue raft log entries into admission queues. This is
 				// non-blocking; actual admission happens asynchronously.
 				tenantID, _ := r.TenantID()
-				for _, entry := range msgStorageAppend.Entries {
+				for _, entry := range rd.LogAppend.Entries {
 					if len(entry.Data) == 0 {
 						continue // nothing to do
 					}
@@ -1063,7 +1049,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 				}
 			}
 
-			if state, err = s.StoreEntries(ctx, state, m, cb, &stats.append); err != nil {
+			if state, err = s.StoreEntries(ctx, state, app, cb, &stats.append); err != nil {
 				return stats, errors.Wrap(err, "while storing log entries")
 			}
 		}
@@ -1093,8 +1079,8 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	}
 
 	stats.tApplicationBegin = timeutil.Now()
-	if hasMsg(msgStorageApply) {
-		r.traceEntries(msgStorageApply.Entries, "committed, before applying any entries")
+	if rd.LogApply.To != 0 {
+		r.traceEntries(rd.LogApply.Entries, "committed, before applying any entries")
 
 		err := appTask.ApplyCommittedEntries(ctx)
 		stats.apply = sm.moveStats()
@@ -1132,12 +1118,12 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 		}
 
 		// Send MsgStorageApply's responses.
-		r.sendRaftMessages(ctx, msgStorageApply.Responses, nil /* blocked */, true /* willDeliverLocal */)
+		r.sendRaftMessages(ctx, rd.LogApply.Responses, nil /* blocked */, true /* willDeliverLocal */)
 	}
 	stats.tApplicationEnd = timeutil.Now()
 	applicationElapsed := stats.tApplicationEnd.Sub(stats.tApplicationBegin).Nanoseconds()
 	r.store.metrics.RaftApplyCommittedLatency.RecordValue(applicationElapsed)
-	r.store.metrics.RaftCommandsApplied.Inc(int64(len(msgStorageApply.Entries)))
+	r.store.metrics.RaftCommandsApplied.Inc(int64(len(rd.LogApply.Entries)))
 	if r.store.TestingKnobs().EnableUnconditionalRefreshesInRaftReady {
 		refreshReason = reasonNewLeaderOrConfigChange
 	}
@@ -1197,66 +1183,6 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	// get blocked.
 	r.updateProposalQuotaRaftMuLocked(ctx, lastLeaderID)
 	return stats, nil
-}
-
-// asyncReady encapsulates the messages that are ready to be sent to other peers
-// or to be sent to local storage routines when async storage writes are enabled.
-// All fields in asyncReady are read-only.
-// TODO(nvanbenschoten): move this into go.etcd.io/raft.
-type asyncReady struct {
-	// The current volatile state of a Node.
-	// SoftState will be nil if there is no update.
-	// It is not required to consume or store SoftState.
-	*raft.SoftState
-
-	// Messages specifies outbound messages to other peers and to local storage
-	// threads. These messages can be sent in any order.
-	//
-	// If it contains a MsgSnap message, the application MUST report back to raft
-	// when the snapshot has been received or has failed by calling ReportSnapshot.
-	Messages []raftpb.Message
-}
-
-// makeAsyncReady constructs an asyncReady from the provided Ready.
-func makeAsyncReady(rd raft.Ready) asyncReady {
-	return asyncReady{
-		SoftState: rd.SoftState,
-		Messages:  rd.Messages,
-	}
-}
-
-// hasMsg returns whether the provided raftpb.Message is present.
-// It serves as a poor man's Optional[raftpb.Message].
-func hasMsg(m raftpb.Message) bool { return m.Type != 0 }
-
-// splitLocalStorageMsgs filters out local storage messages from the provided
-// message slice and returns them separately.
-func splitLocalStorageMsgs(
-	msgs []raftpb.Message,
-) (otherMsgs []raftpb.Message, msgStorageAppend, msgStorageApply raftpb.Message) {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		switch msgs[i].Type {
-		case raftpb.MsgStorageAppend:
-			if hasMsg(msgStorageAppend) {
-				panic("two MsgStorageAppend")
-			}
-			msgStorageAppend = msgs[i]
-		case raftpb.MsgStorageApply:
-			if hasMsg(msgStorageApply) {
-				panic("two MsgStorageApply")
-			}
-			msgStorageApply = msgs[i]
-		default:
-			// Local storage messages will always be at the end of the messages slice,
-			// so we can terminate iteration as soon as we reach any other message
-			// type. This is leaking an implementation detail from etcd/raft which may
-			// not always hold, but while it does, we use it for convenience and
-			// assert against it changing in sendRaftMessages.
-			return msgs[:i+1], msgStorageAppend, msgStorageApply
-		}
-	}
-	// Only local storage messages.
-	return nil, msgStorageAppend, msgStorageApply
 }
 
 // maybeFatalOnRaftReadyErr will fatal if err is neither nil nor

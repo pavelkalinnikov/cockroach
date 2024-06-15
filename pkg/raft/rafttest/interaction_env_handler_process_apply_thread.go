@@ -43,6 +43,10 @@ func (env *InteractionEnv) handleProcessApplyThread(t *testing.T, d datadriven.T
 	return nil
 }
 
+func msgStorageAppendToMessage(m raft.MsgStorageAppend) raftpb.Message {
+	return raftpb.Message{}
+}
+
 // ProcessApplyThread runs processes a single message on the "apply" thread of
 // the node with the given index.
 func (env *InteractionEnv) ProcessApplyThread(idx int) error {

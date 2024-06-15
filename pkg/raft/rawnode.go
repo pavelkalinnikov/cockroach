@@ -125,6 +125,17 @@ func (rn *RawNode) Ready() Ready {
 	return rd
 }
 
+func (rn *RawNode) AsyncReady() AsyncReady {
+	rd := rn.readyWithoutAccept()
+	rn.acceptReady(rd)
+	return AsyncReady{
+		SoftState: rd.SoftState,
+		Messages:  rd.Messages,
+		LogAppend: rd.LogAppend,
+		LogApply:  rd.LogApply,
+	}
+}
+
 // readyWithoutAccept returns a Ready. This is a read-only operation, i.e. there
 // is no obligation that the Ready must be handled.
 func (rn *RawNode) readyWithoutAccept() Ready {
@@ -152,12 +163,10 @@ func (rn *RawNode) readyWithoutAccept() Ready {
 		// If async storage writes are enabled, enqueue messages to
 		// local storage threads, where applicable.
 		if needStorageAppendMsg(r, rd) {
-			m := newStorageAppendMsg(r, rd)
-			rd.Messages = append(rd.Messages, m)
+			rd.LogAppend = newStorageAppendMsg(r, rd)
 		}
 		if needStorageApplyMsg(rd) {
-			m := newStorageApplyMsg(r, rd)
-			rd.Messages = append(rd.Messages, m)
+			rd.LogApply = newStorageApplyMsg(r, rd)
 		}
 	} else {
 		// If async storage writes are disabled, immediately enqueue
@@ -203,33 +212,25 @@ func needStorageAppendRespMsg(r *raft, rd Ready) bool {
 		!IsEmptySnap(rd.Snapshot)
 }
 
+type MsgStorageAppend struct {
+	To        uint64
+	HardState pb.HardState
+	Snapshot  pb.Snapshot
+	Entries   []pb.Entry
+	Responses []pb.Message
+}
+
 // newStorageAppendMsg creates the message that should be sent to the local
 // append thread to instruct it to append log entries, write an updated hard
 // state, and apply a snapshot. The message also carries a set of responses
 // that should be delivered after the rest of the message is processed. Used
 // with AsyncStorageWrites.
-func newStorageAppendMsg(r *raft, rd Ready) pb.Message {
-	m := pb.Message{
-		Type:    pb.MsgStorageAppend,
-		To:      LocalAppendThread,
-		From:    r.id,
-		Entries: rd.Entries,
-	}
-	if !IsEmptyHardState(rd.HardState) {
-		// If the Ready includes a HardState update, assign each of its fields
-		// to the corresponding fields in the Message. This allows clients to
-		// reconstruct the HardState and save it to stable storage.
-		//
-		// If the Ready does not include a HardState update, make sure to not
-		// assign a value to any of the fields so that a HardState reconstructed
-		// from them will be empty (return true from raft.IsEmptyHardState).
-		m.Term = rd.Term
-		m.Vote = rd.Vote
-		m.Commit = rd.Commit
-	}
-	if !IsEmptySnap(rd.Snapshot) {
-		snap := rd.Snapshot
-		m.Snapshot = &snap
+func newStorageAppendMsg(r *raft, rd Ready) MsgStorageAppend {
+	m := MsgStorageAppend{
+		To:        r.id,
+		HardState: rd.HardState,
+		Snapshot:  rd.Snapshot,
+		Entries:   rd.Entries,
 	}
 	// Attach all messages in msgsAfterAppend as responses to be delivered after
 	// the message is processed, along with a self-directed MsgStorageAppendResp
@@ -354,20 +355,23 @@ func newStorageAppendRespMsg(r *raft, rd Ready) pb.Message {
 func needStorageApplyMsg(rd Ready) bool     { return len(rd.CommittedEntries) > 0 }
 func needStorageApplyRespMsg(rd Ready) bool { return needStorageApplyMsg(rd) }
 
+type MsgStorageApply struct {
+	To        uint64
+	Entries   []pb.Entry
+	Responses []pb.Message
+}
+
 // newStorageApplyMsg creates the message that should be sent to the local
 // apply thread to instruct it to apply committed log entries. The message
 // also carries a response that should be delivered after the rest of the
 // message is processed. Used with AsyncStorageWrites.
-func newStorageApplyMsg(r *raft, rd Ready) pb.Message {
-	ents := rd.CommittedEntries
-	return pb.Message{
-		Type:    pb.MsgStorageApply,
-		To:      LocalApplyThread,
-		From:    r.id,
-		Term:    0, // committed entries don't apply under a specific term
-		Entries: ents,
+func newStorageApplyMsg(r *raft, rd Ready) MsgStorageApply {
+	entries := rd.CommittedEntries
+	return MsgStorageApply{
+		To:      r.id,
+		Entries: entries,
 		Responses: []pb.Message{
-			newStorageApplyRespMsg(r, ents),
+			newStorageApplyRespMsg(r, entries),
 		},
 	}
 }

@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/raft"
-	"github.com/cockroachdb/cockroach/pkg/raft/raftpb"
 	"github.com/cockroachdb/datadriven"
 )
 
@@ -59,22 +58,12 @@ func (env *InteractionEnv) ProcessReady(idx int) error {
 		}
 	}
 
-	for _, m := range rd.Messages {
-		if raft.IsLocalMsgTarget(m.To) {
-			if !n.Config.AsyncStorageWrites {
-				panic("unexpected local msg target")
-			}
-			switch m.Type {
-			case raftpb.MsgStorageAppend:
-				n.AppendWork = append(n.AppendWork, m)
-			case raftpb.MsgStorageApply:
-				n.ApplyWork = append(n.ApplyWork, m)
-			default:
-				panic(fmt.Sprintf("unexpected message type %s", m.Type))
-			}
-		} else {
-			env.Messages = append(env.Messages, m)
-		}
+	env.Messages = append(env.Messages, rd.Messages...)
+	if rd.LogAppend.To != 0 {
+		n.AppendWork = append(n.AppendWork, rd.LogAppend)
+	}
+	if rd.LogApply.To != 0 {
+		n.ApplyWork = append(n.ApplyWork, rd.LogApply)
 	}
 
 	if !n.Config.AsyncStorageWrites {

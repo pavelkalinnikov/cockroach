@@ -13,7 +13,6 @@ package logstore
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"slices"
 	"sync"
@@ -61,17 +60,6 @@ var enableNonBlockingRaftLogSync = settings.RegisterBoolSetting(
 		"on server crashes, but can reduce write latency.",
 	envutil.EnvOrDefaultBool("COCKROACH_ENABLE_RAFT_LOG_NON_BLOCKING_SYNCHRONIZATION", true),
 )
-
-// MsgStorageAppend is a raftpb.Message with type MsgStorageAppend.
-type MsgStorageAppend raftpb.Message
-
-// MakeMsgStorageAppend constructs a MsgStorageAppend from a raftpb.Message.
-func MakeMsgStorageAppend(m raftpb.Message) MsgStorageAppend {
-	if m.Type != raftpb.MsgStorageAppend {
-		panic(fmt.Sprintf("unexpected message type %s", m.Type))
-	}
-	return MsgStorageAppend(m)
-}
 
 // RaftState stores information about the last entry and the size of the log.
 type RaftState struct {
@@ -146,7 +134,11 @@ func newStoreEntriesBatch(eng storage.Engine) storage.Batch {
 // Accepts the state of the log before the operation, returns the state after.
 // Persists HardState atomically with, or strictly after Entries.
 func (s *LogStore) StoreEntries(
-	ctx context.Context, state RaftState, m MsgStorageAppend, cb SyncCallback, stats *AppendStats,
+	ctx context.Context,
+	state RaftState,
+	m raft.MsgStorageAppend,
+	cb SyncCallback,
+	stats *AppendStats,
 ) (RaftState, error) {
 	batch := newStoreEntriesBatch(s.Engine)
 	return s.storeEntriesAndCommitBatch(ctx, state, m, cb, stats, batch)
@@ -157,7 +149,7 @@ func (s *LogStore) StoreEntries(
 func (s *LogStore) storeEntriesAndCommitBatch(
 	ctx context.Context,
 	state RaftState,
-	m MsgStorageAppend,
+	m raft.MsgStorageAppend,
 	cb SyncCallback,
 	stats *AppendStats,
 	batch storage.Batch,
@@ -198,12 +190,7 @@ func (s *LogStore) storeEntriesAndCommitBatch(
 		stats.End = timeutil.Now()
 	}
 
-	hs := raftpb.HardState{
-		Term:   m.Term,
-		Vote:   m.Vote,
-		Commit: m.Commit,
-	}
-	if !raft.IsEmptyHardState(hs) {
+	if !raft.IsEmptyHardState(m.HardState) {
 		// NB: Note that without additional safeguards, it's incorrect to write
 		// the HardState before appending m.Entries. When catching up, a follower
 		// will receive Entries that are immediately Committed in the same
@@ -212,7 +199,7 @@ func (s *LogStore) storeEntriesAndCommitBatch(
 		//
 		// We have both in the same batch, so there's no problem. If that ever
 		// changes, we must write and sync the Entries before the HardState.
-		if err := s.StateLoader.SetHardState(ctx, batch, hs); err != nil {
+		if err := s.StateLoader.SetHardState(ctx, batch, m.HardState); err != nil {
 			const expl = "during setHardState"
 			return RaftState{}, errors.Wrap(err, expl)
 		}
