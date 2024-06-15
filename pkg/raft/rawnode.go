@@ -140,7 +140,7 @@ func (rn *RawNode) asyncReadyWithoutAccept() Ready {
 	r := rn.raft
 	rd := Ready{
 		StorageReady: newStorageAppendMsg(r),
-		ApplyReady:   newStorageApplyMsg(r),
+		ApplyReady:   newStorageApplyMsg(rn),
 		Messages:     r.msgs,
 	}
 	if softSt := r.softState(); !softSt.equal(rn.prevSoftSt) {
@@ -296,8 +296,9 @@ func newStorageAppendRespMsg(r *raft, rd StorageReady) pb.Message {
 // apply thread to instruct it to apply committed log entries. The message
 // also carries a response that should be delivered after the rest of the
 // message is processed. Used with AsyncStorageWrites.
-func newStorageApplyMsg(r *raft) ApplyReady {
-	entries := r.raftLog.nextCommittedEnts()
+func newStorageApplyMsg(rn *RawNode) ApplyReady {
+	r := rn.raft
+	entries := r.raftLog.nextCommittedEnts(rn.applyUnstableEntries())
 	return ApplyReady{
 		CommittedEntries: entries,
 		Responses:        []pb.Message{newStorageApplyRespMsg(r, entries)},
@@ -332,8 +333,15 @@ func (rn *RawNode) acceptReady(rd Ready) {
 	rn.raft.raftLog.acceptUnstable()
 	if entries := rd.CommittedEntries; len(entries) > 0 {
 		index := entries[len(entries)-1].Index
-		rn.raft.raftLog.acceptApplying(index, entsSize(entries))
+		rn.raft.raftLog.acceptApplying(index, entsSize(entries), rn.applyUnstableEntries())
 	}
+}
+
+// applyUnstableEntries returns whether entries are allowed to be applied once
+// they are known to be committed but before they have been written locally to
+// stable storage.
+func (rn *RawNode) applyUnstableEntries() bool {
+	return !rn.asyncStorageWrites
 }
 
 // HasReady called when RawNode user need to check if any Ready pending.
@@ -352,7 +360,7 @@ func (rn *RawNode) HasReady() bool {
 	if len(r.msgs) > 0 || len(r.msgsAfterAppend) > 0 {
 		return true
 	}
-	if r.raftLog.hasNextUnstableEnts() || r.raftLog.hasNextCommittedEnts() {
+	if r.raftLog.hasNextUnstableEnts() || r.raftLog.hasNextCommittedEnts(rn.applyUnstableEntries()) {
 		return true
 	}
 	return false

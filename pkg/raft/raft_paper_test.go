@@ -411,7 +411,7 @@ func TestLeaderCommitEntry(t *testing.T) {
 	assert.Equal(t, li+1, r.raftLog.committed)
 	assert.Equal(t, []pb.Entry{
 		{Index: li + 1, Term: 1, Data: []byte("some data")},
-	}, r.raftLog.nextCommittedEnts())
+	}, r.raftLog.nextCommittedEnts(true))
 	msgs := r.readMessages()
 	sort.Sort(messageSlice(msgs))
 	for i, m := range msgs {
@@ -488,7 +488,7 @@ func TestLeaderCommitPrecedingEntries(t *testing.T) {
 		assert.Equal(t, append(tt,
 			pb.Entry{Term: 3, Index: li + 1},
 			pb.Entry{Term: 3, Index: li + 2, Data: []byte("some data")},
-		), r.raftLog.nextCommittedEnts(), "#%d", i)
+		), r.raftLog.nextCommittedEnts(true), "#%d", i)
 	}
 }
 
@@ -535,7 +535,7 @@ func TestFollowerCommitEntry(t *testing.T) {
 		r.Step(pb.Message{From: 2, To: 1, Type: pb.MsgApp, Term: 1, Entries: tt.ents, Commit: tt.commit})
 
 		assert.Equal(t, tt.commit, r.raftLog.committed, "#%d", i)
-		assert.Equal(t, tt.ents[:int(tt.commit)], r.raftLog.nextCommittedEnts(), "#%d", i)
+		assert.Equal(t, tt.ents[:int(tt.commit)], r.raftLog.nextCommittedEnts(true), "#%d", i)
 	}
 }
 
