@@ -147,7 +147,9 @@ func TestNodePropose(t *testing.T) {
 	go n.run()
 	require.NoError(t, n.Campaign(context.TODO()))
 	for {
+		fmt.Println("before ready")
 		rd := <-n.Ready()
+		fmt.Println("ready")
 		s.Append(rd.Entries)
 		// change the step function to appendStep until this raft becomes leader
 		if rd.SoftState.Lead == r.id {
@@ -440,19 +442,30 @@ func TestNodeStart(t *testing.T) {
 	cc := raftpb.ConfChange{Type: raftpb.ConfChangeAddNode, NodeID: 1}
 	ccdata, err := cc.Marshal()
 	require.NoError(t, err)
+	ccEntry := raftpb.Entry{Type: raftpb.EntryConfChange, Term: 1, Index: 1, Data: ccdata}
+
 	wants := []Ready{
 		{
 			StorageReady: StorageReady{
 				HardState: raftpb.HardState{Term: 1, Commit: 1, Vote: 0},
-				Entries: []raftpb.Entry{
-					{Type: raftpb.EntryConfChange, Term: 1, Index: 1, Data: ccdata},
-				},
-				Responses: []raftpb.Message{},
+				Entries:   []raftpb.Entry{ccEntry},
+				Responses: []raftpb.Message{{
+					Type:    raftpb.MsgStorageAppendResp,
+					To:      1,
+					From:    LocalAppendThread,
+					Term:    1,
+					LogTerm: 1,
+					Index:   1,
+				}},
 			},
 			ApplyReady: ApplyReady{
-				CommittedEntries: []raftpb.Entry{
-					{Type: raftpb.EntryConfChange, Term: 1, Index: 1, Data: ccdata},
-				},
+				CommittedEntries: []raftpb.Entry{ccEntry},
+				Responses: []raftpb.Message{{
+					Type:    raftpb.MsgStorageApplyResp,
+					To:      1,
+					From:    LocalApplyThread,
+					Entries: []raftpb.Entry{ccEntry},
+				}},
 			},
 			// MustSync: true,
 		},
@@ -460,9 +473,26 @@ func TestNodeStart(t *testing.T) {
 			StorageReady: StorageReady{
 				HardState: raftpb.HardState{Term: 2, Commit: 2, Vote: 1},
 				Entries:   []raftpb.Entry{{Term: 2, Index: 3, Data: []byte("foo")}},
+				Responses: []raftpb.Message{{
+					Type: raftpb.MsgAppResp,
+					To:   1, From: 1, Term: 2, Index: 3,
+				}, {
+					Type:    raftpb.MsgStorageAppendResp,
+					To:      1,
+					From:    LocalAppendThread,
+					Term:    2,
+					LogTerm: 2,
+					Index:   3,
+				}},
 			},
 			ApplyReady: ApplyReady{
 				CommittedEntries: []raftpb.Entry{{Term: 2, Index: 2, Data: nil}},
+				Responses: []raftpb.Message{{
+					Type:    raftpb.MsgStorageApplyResp,
+					To:      1,
+					From:    LocalApplyThread,
+					Entries: []raftpb.Entry{{Term: 2, Index: 2, Data: nil}},
+				}},
 			},
 			// MustSync: true,
 		},
@@ -473,6 +503,12 @@ func TestNodeStart(t *testing.T) {
 			},
 			ApplyReady: ApplyReady{
 				CommittedEntries: []raftpb.Entry{{Term: 2, Index: 3, Data: []byte("foo")}},
+				Responses: []raftpb.Message{{
+					Type:    raftpb.MsgStorageApplyResp,
+					To:      1,
+					From:    LocalApplyThread,
+					Entries: []raftpb.Entry{{Term: 2, Index: 3, Data: []byte("foo")}},
+				}},
 			},
 			// MustSync: false,
 		},
@@ -543,6 +579,12 @@ func TestNodeRestart(t *testing.T) {
 		ApplyReady: ApplyReady{
 			// commit up to index commit index in st
 			CommittedEntries: entries[:st.Commit],
+			Responses: []raftpb.Message{{
+				Type:    raftpb.MsgStorageApplyResp,
+				To:      1,
+				From:    LocalApplyThread,
+				Entries: entries[:st.Commit],
+			}},
 		},
 	}
 
@@ -586,6 +628,12 @@ func TestNodeRestartFromSnapshot(t *testing.T) {
 		ApplyReady: ApplyReady{
 			// commit up to index commit index in st
 			CommittedEntries: entries,
+			Responses: []raftpb.Message{{
+				Type:    raftpb.MsgStorageApplyResp,
+				To:      1,
+				From:    LocalApplyThread,
+				Entries: entries,
+			}},
 		},
 	}
 
@@ -826,40 +874,31 @@ func TestCommitPaginationWithAsyncStorageWrites(t *testing.T) {
 
 	// Persist vote.
 	rd := readyWithTimeout(n)
-	require.Len(t, rd.Messages, 1)
-	m := rd.Messages[0]
-	require.Equal(t, raftpb.MsgStorageAppend, m.Type)
-	require.NoError(t, s.Append(m.Entries))
-	for _, resp := range m.Responses {
+	require.Empty(t, rd.Messages)
+	require.False(t, rd.StorageReady.Empty())
+	require.NoError(t, s.Append(rd.Entries))
+	for _, resp := range rd.StorageReady.Responses {
 		require.NoError(t, n.Step(ctx, resp))
 	}
 	// Append empty entry.
 	rd = readyWithTimeout(n)
-	require.Len(t, rd.Messages, 1)
-	m = rd.Messages[0]
-	require.Equal(t, raftpb.MsgStorageAppend, m.Type)
-	require.NoError(t, s.Append(m.Entries))
-	for _, resp := range m.Responses {
+	require.Empty(t, rd.Messages)
+	require.False(t, rd.StorageReady.Empty())
+	require.NoError(t, s.Append(rd.Entries))
+	for _, resp := range rd.StorageReady.Responses {
 		require.NoError(t, n.Step(ctx, resp))
 	}
 	// Apply empty entry.
 	rd = readyWithTimeout(n)
-	require.Len(t, rd.Messages, 2)
-	for _, m := range rd.Messages {
-		switch m.Type {
-		case raftpb.MsgStorageAppend:
-			require.NoError(t, s.Append(m.Entries))
-			for _, resp := range m.Responses {
-				require.NoError(t, n.Step(ctx, resp))
-			}
-		case raftpb.MsgStorageApply:
-			require.Len(t, m.Entries, 1)
-			require.Len(t, m.Responses, 1)
-			require.NoError(t, n.Step(ctx, m.Responses[0]))
-		default:
-			t.Fatalf("unexpected: %v", m)
-		}
+	require.Empty(t, rd.Messages)
+	require.False(t, rd.StorageReady.Empty())
+	require.NoError(t, s.Append(rd.Entries))
+	for _, resp := range rd.StorageReady.Responses {
+		require.NoError(t, n.Step(ctx, resp))
 	}
+	require.Len(t, rd.CommittedEntries, 1)
+	require.Len(t, rd.ApplyReady.Responses, 1)
+	require.NoError(t, n.Step(ctx, rd.ApplyReady.Responses[0]))
 
 	// Propose first entry.
 	blob := []byte(strings.Repeat("a", 1024))
@@ -867,12 +906,10 @@ func TestCommitPaginationWithAsyncStorageWrites(t *testing.T) {
 
 	// Append first entry.
 	rd = readyWithTimeout(n)
-	require.Len(t, rd.Messages, 1)
-	m = rd.Messages[0]
-	require.Equal(t, raftpb.MsgStorageAppend, m.Type)
-	require.Len(t, m.Entries, 1)
-	require.NoError(t, s.Append(m.Entries))
-	for _, resp := range m.Responses {
+	require.Empty(t, rd.Messages)
+	require.Len(t, rd.Entries, 1)
+	require.NoError(t, s.Append(rd.Entries))
+	for _, resp := range rd.StorageReady.Responses {
 		require.NoError(t, n.Step(ctx, resp))
 	}
 
@@ -881,45 +918,30 @@ func TestCommitPaginationWithAsyncStorageWrites(t *testing.T) {
 
 	// Append second entry. Don't apply first entry yet.
 	rd = readyWithTimeout(n)
-	require.Len(t, rd.Messages, 2)
-	var applyResps []raftpb.Message
-	for _, m := range rd.Messages {
-		switch m.Type {
-		case raftpb.MsgStorageAppend:
-			require.NoError(t, s.Append(m.Entries))
-			for _, resp := range m.Responses {
-				require.NoError(t, n.Step(ctx, resp))
-			}
-		case raftpb.MsgStorageApply:
-			require.Len(t, m.Entries, 1)
-			require.Len(t, m.Responses, 1)
-			applyResps = append(applyResps, m.Responses[0])
-		default:
-			t.Fatalf("unexpected: %v", m)
-		}
+	require.Empty(t, rd.Messages)
+	require.False(t, rd.StorageReady.Empty())
+	require.NoError(t, s.Append(rd.Entries))
+	for _, resp := range rd.StorageReady.Responses {
+		require.NoError(t, n.Step(ctx, resp))
 	}
+	require.Len(t, rd.CommittedEntries, 1)
+	require.Len(t, rd.ApplyReady.Responses, 1)
+	applyResps := rd.ApplyReady.Responses
 
 	// Propose third entry.
 	require.NoError(t, n.Propose(ctx, blob))
 
 	// Append third entry. Don't apply second entry yet.
 	rd = readyWithTimeout(n)
-	require.Len(t, rd.Messages, 2)
-	for _, m := range rd.Messages {
-		switch m.Type {
-		case raftpb.MsgStorageAppend:
-			require.NoError(t, s.Append(m.Entries))
-			for _, resp := range m.Responses {
-				require.NoError(t, n.Step(ctx, resp))
-			}
-		case raftpb.MsgStorageApply:
-			require.Len(t, m.Entries, 1)
-			require.Len(t, m.Responses, 1)
-			applyResps = append(applyResps, m.Responses[0])
-		default:
-			t.Fatalf("unexpected: %v", m)
-		}
+	require.Empty(t, rd.Messages)
+	require.False(t, rd.StorageReady.Empty())
+	require.NoError(t, s.Append(rd.Entries))
+	for _, resp := range rd.StorageReady.Responses {
+		require.NoError(t, n.Step(ctx, resp))
 	}
+	require.Len(t, rd.CommittedEntries, 1)
+	require.Len(t, rd.ApplyReady.Responses, 1)
+	applyResps = append(applyResps, rd.ApplyReady.Responses[0])
 
 	// Third entry should not be returned to be applied until first entry's
 	// application is acknowledged.
@@ -927,9 +949,7 @@ func TestCommitPaginationWithAsyncStorageWrites(t *testing.T) {
 	for drain {
 		select {
 		case rd := <-n.Ready():
-			for _, m := range rd.Messages {
-				require.NotEqual(t, raftpb.MsgStorageApply, m.Type, "unexpected message: %v", m)
-			}
+			require.Empty(t, rd.ApplyReady.CommittedEntries)
 		case <-time.After(10 * time.Millisecond):
 			drain = false
 		}
@@ -941,11 +961,9 @@ func TestCommitPaginationWithAsyncStorageWrites(t *testing.T) {
 
 	// Third entry now returned for application.
 	rd = readyWithTimeout(n)
-	require.Len(t, rd.Messages, 1)
-	m = rd.Messages[0]
-	require.Equal(t, raftpb.MsgStorageApply, m.Type)
-	require.Len(t, m.Entries, 1)
-	applyResps = append(applyResps, m.Responses[0])
+	require.Empty(t, rd.Messages)
+	require.Len(t, rd.CommittedEntries, 1)
+	applyResps = append(applyResps, rd.ApplyReady.Responses[0])
 
 	// Acknowledged second and third entry application.
 	for _, resp := range applyResps {

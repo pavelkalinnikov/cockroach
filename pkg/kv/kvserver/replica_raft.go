@@ -847,7 +847,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 		unquiesceAndWakeLeader := hasReady || numFlushed > 0 || len(r.mu.proposals) > 0
 		return unquiesceAndWakeLeader, nil
 	})
-	r.mu.applyingEntries = len(rd.Apply.Entries) != 0
+	r.mu.applyingEntries = len(rd.CommittedEntries) != 0
 	pausedFollowers := r.mu.pausedFollowers
 	r.mu.Unlock()
 	if errors.Is(err, errRemoved) {
@@ -921,7 +921,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	sm := r.getStateMachine()
 	dec := r.getDecoder()
 	var appTask apply.Task
-	if entries := rd.Apply.Entries; len(entries) != 0 {
+	if entries := rd.CommittedEntries; len(entries) != 0 {
 		appTask = apply.MakeTask(sm, dec)
 		appTask.SetMaxBatchSize(r.store.TestingKnobs().MaxApplicationBatchSize)
 		defer appTask.Close()
@@ -935,7 +935,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 		}
 	}
 
-	if store := rd.Storage; !store.Empty() {
+	if store := rd.StorageReady; !store.Empty() {
 		if !raft.IsEmptySnap(store.Snapshot) {
 			if inSnap.Desc == nil {
 				// If we didn't expect Raft to have a snapshot but it has one
@@ -1079,7 +1079,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	}
 
 	stats.tApplicationBegin = timeutil.Now()
-	if entries := rd.Apply.Entries; len(entries) != 0 {
+	if entries := rd.CommittedEntries; len(entries) != 0 {
 		r.traceEntries(entries, "committed, before applying any entries")
 
 		err := appTask.ApplyCommittedEntries(ctx)
@@ -1118,12 +1118,12 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 		}
 
 		// Send MsgStorageApply's responses.
-		r.sendRaftMessages(ctx, rd.Apply.Responses, nil /* blocked */, true /* willDeliverLocal */)
+		r.sendRaftMessages(ctx, rd.ApplyReady.Responses, nil /* blocked */, true /* willDeliverLocal */)
 	}
 	stats.tApplicationEnd = timeutil.Now()
 	applicationElapsed := stats.tApplicationEnd.Sub(stats.tApplicationBegin).Nanoseconds()
 	r.store.metrics.RaftApplyCommittedLatency.RecordValue(applicationElapsed)
-	r.store.metrics.RaftCommandsApplied.Inc(int64(len(rd.Apply.Entries)))
+	r.store.metrics.RaftCommandsApplied.Inc(int64(len(rd.CommittedEntries)))
 	if r.store.TestingKnobs().EnableUnconditionalRefreshesInRaftReady {
 		refreshReason = reasonNewLeaderOrConfigChange
 	}

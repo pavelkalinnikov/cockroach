@@ -39,9 +39,8 @@ type RawNode struct {
 	asyncStorageWrites bool
 
 	// Mutable fields.
-	prevSoftSt     *SoftState
-	prevHardSt     pb.HardState
-	stepsOnAdvance []pb.Message
+	prevSoftSt *SoftState
+	prevHardSt pb.HardState
 }
 
 // NewRawNode instantiates a RawNode from the given configuration.
@@ -120,26 +119,17 @@ func (rn *RawNode) Step(m pb.Message) error {
 // and sending messages. The returned Ready() *must* be handled and subsequently
 // passed back via Advance().
 func (rn *RawNode) Ready() Ready {
-	rd := rn.asyncReadyWithoutAccept()
+	rd := rn.readyWithoutAccept()
 	rn.acceptReady(rd)
-	return rd
-}
-
-// readyWithoutAccept is an adapter that returns a Ready compatible with code
-// assuming sync log writes.
-func (rn *RawNode) readyWithoutAccept() Ready {
-	rd := rn.asyncReadyWithoutAccept()
-	rd.Messages = append(rd.Messages, rd.StorageReady.Responses...)
-	rd.Messages = append(rd.Messages, rd.ApplyReady.Responses...)
 	return rd
 }
 
 // asyncReadyWithoutAccept returns a Ready. This is a read-only operation, i.e.
 // there is no obligation that the Ready must be handled.
-func (rn *RawNode) asyncReadyWithoutAccept() Ready {
+func (rn *RawNode) readyWithoutAccept() Ready {
 	r := rn.raft
 	rd := Ready{
-		StorageReady: newStorageAppendMsg(r),
+		StorageReady: newStorageAppendMsg(rn),
 		ApplyReady:   newStorageApplyMsg(rn),
 		Messages:     r.msgs,
 	}
@@ -164,10 +154,11 @@ func needStorageAppendRespMsg(r *raft, rd StorageReady) bool {
 // state, and apply a snapshot. The message also carries a set of responses
 // that should be delivered after the rest of the message is processed. Used
 // with AsyncStorageWrites.
-func newStorageAppendMsg(r *raft) StorageReady {
-	rd := StorageReady{
-		HardState: r.hardState(),
-		Entries:   r.raftLog.nextUnstableEnts(),
+func newStorageAppendMsg(rn *RawNode) StorageReady {
+	r := rn.raft
+	rd := StorageReady{Entries: r.raftLog.nextUnstableEnts()}
+	if hardSt := r.hardState(); !isHardStateEqual(hardSt, rn.prevHardSt) {
+		rd.HardState = hardSt
 	}
 	if r.raftLog.hasNextUnstableSnapshot() {
 		rd.Snapshot = *r.raftLog.nextUnstableSnapshot()
@@ -299,6 +290,9 @@ func newStorageAppendRespMsg(r *raft, rd StorageReady) pb.Message {
 func newStorageApplyMsg(rn *RawNode) ApplyReady {
 	r := rn.raft
 	entries := r.raftLog.nextCommittedEnts(rn.applyUnstableEntries())
+	if len(entries) == 0 {
+		return ApplyReady{}
+	}
 	return ApplyReady{
 		CommittedEntries: entries,
 		Responses:        []pb.Message{newStorageApplyRespMsg(r, entries)},
@@ -371,18 +365,19 @@ func (rn *RawNode) HasReady() bool {
 //
 // NOTE: Advance must not be called when using AsyncStorageWrites. Response messages from
 // the local append and apply threads take its place.
-func (rn *RawNode) Advance(_ Ready) {
+func (rn *RawNode) Advance(rd Ready) {
 	// The actions performed by this function are encoded into stepsOnAdvance in
 	// acceptReady. In earlier versions of this library, they were computed from
 	// the provided Ready struct. Retain the unused parameter for compatibility.
 	if rn.asyncStorageWrites {
 		rn.raft.logger.Panicf("Advance must not be called when using AsyncStorageWrites")
 	}
-	for i, m := range rn.stepsOnAdvance {
+	for _, m := range rd.StorageReady.Responses {
 		_ = rn.raft.Step(m)
-		rn.stepsOnAdvance[i] = pb.Message{}
 	}
-	rn.stepsOnAdvance = rn.stepsOnAdvance[:0]
+	for _, m := range rd.ApplyReady.Responses {
+		_ = rn.raft.Step(m)
+	}
 }
 
 // Status returns the current status of the given group. This allocates, see

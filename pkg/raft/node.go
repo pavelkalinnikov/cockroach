@@ -61,6 +61,8 @@ type StorageReady struct {
 	pb.HardState
 	// Snapshot is the snapshot to be saved to stable storage. If not empty, must
 	// be saved before Entries.
+	//
+	// TODO(pav-kv): put this to ApplyReady.
 	Snapshot pb.Snapshot
 	// Entries contains log entries to be saved to stable storage.
 	Entries []pb.Entry
@@ -424,7 +426,11 @@ func (n *node) run() {
 			n.rn.Tick()
 		case readyc <- rd:
 			n.rn.acceptReady(rd)
-			rd = Ready{}
+			if !n.rn.asyncStorageWrites {
+				advancec = n.advancec
+			} else {
+				rd = Ready{}
+			}
 			readyc = nil
 		case <-advancec:
 			n.rn.Advance(rd)
