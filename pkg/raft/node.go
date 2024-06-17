@@ -62,7 +62,9 @@ type StorageReady struct {
 	// Snapshot is the snapshot to be saved to stable storage. If not empty, must
 	// be saved before Entries.
 	//
-	// TODO(pav-kv): put this to ApplyReady.
+	// TODO(pav-kv): move it to ApplyReady, as the snapshot is a state machine /
+	// learner concept. With log and state machine storage decoupled (#16624), the
+	// snapshot will be routed to state machine storage.
 	Snapshot pb.Snapshot
 	// Entries contains log entries to be saved to stable storage.
 	Entries []pb.Entry

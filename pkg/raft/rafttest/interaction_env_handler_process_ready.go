@@ -72,6 +72,8 @@ func (env *InteractionEnv) ProcessReady(idx int) error {
 	n := &env.Nodes[idx]
 	rd := n.Ready()
 
+	// TODO(pav-kv): the code below is ugly because it tries to keep the output
+	// format in tests unchanged. Clean it up in a separate commit.
 	toLog := rd
 	if n.Config.AsyncStorageWrites {
 		if st := rd.StorageReady; !st.Empty() {
@@ -94,13 +96,15 @@ func (env *InteractionEnv) ProcessReady(idx int) error {
 		if err := processAppend(n, rd.StorageReady); err != nil {
 			return err
 		}
+		if err := processApply(n, rd.CommittedEntries); err != nil {
+			return err
+		}
+		// TODO(pav-kv): the code below is for compatibility in the test output. We
+		// should just append(env.Messages, Responses...).
 		for _, m := range rd.StorageReady.Responses {
 			if m.To != uint64(idx+1) {
 				env.Messages = append(env.Messages, m)
 			}
-		}
-		if err := processApply(n, rd.CommittedEntries); err != nil {
-			return err
 		}
 		n.Advance(rd)
 	} else {
