@@ -140,6 +140,17 @@ func (l *raftLog) accTerm() uint64 {
 // the leader log), the slice is out of bounds (appending it would introduce a
 // gap), or a.term is outdated.
 func (l *raftLog) maybeAppend(a logSlice) bool {
+	last := l.lastEntryID()
+	if a.prev.index > last.index {
+		return false // out of bounds
+	}
+	// Fast-path for appending at the end of the log.
+	if last.index <= a.lastIndex() && a.termAt(last.index) == last.term {
+		// By raft log matching property, a log match at an index implies the log is
+		// matching at all previous indices. Fast-forward to last.index.
+		return l.append(a.forward(last.index))
+	}
+
 	match, ok := l.match(a)
 	if !ok {
 		return false
