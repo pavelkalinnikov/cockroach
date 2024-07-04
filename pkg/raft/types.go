@@ -38,6 +38,10 @@ func pbEntryID(entry *pb.Entry) entryID {
 	return entryID{term: entry.Term, index: entry.Index}
 }
 
+func snapID(snap *pb.Snapshot) entryID {
+	return entryID{term: snap.Metadata.Term, index: snap.Metadata.Index}
+}
+
 // logMark is a position in a log consistent with the leader at a specific term.
 //
 // This is different from entryID. The entryID ties an entry to the term of the
@@ -53,6 +57,10 @@ type logMark struct {
 	term uint64
 	// index is the position in this leader's log.
 	index uint64
+}
+
+func (l logMark) less(other logMark) bool {
+	return l.term < other.term || l.term == other.term && l.index < other.index
 }
 
 // logSlice describes a correct slice of a raft log.
