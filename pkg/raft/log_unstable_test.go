@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newUnstableForTesting(ls logSlice, snap *pb.Snapshot) unstable {
+func newUnstableForTesting(snap *pb.Snapshot, ls logSlice) unstable {
 	return unstable{
 		snapshot:   snap,
 		logSlice:   ls,
@@ -50,33 +50,33 @@ func TestUnstableMaybeFirstIndex(t *testing.T) {
 	prev4 := entryID{term: 1, index: 4}
 	snap4 := &pb.Snapshot{Metadata: pb.SnapshotMetadata{Index: 4, Term: 1}}
 	for _, tt := range []struct {
-		ls   logSlice
 		snap *pb.Snapshot
+		ls   logSlice
 
 		wok    bool
 		windex uint64
 	}{
 		// no snapshot
 		{
-			prev4.append(1), nil,
+			nil, prev4.append(1),
 			false, 0,
 		},
 		{
-			logSlice{}, nil,
+			nil, logSlice{},
 			false, 0,
 		},
 		// has snapshot
 		{
-			prev4.append(1), snap4,
+			snap4, prev4.append(1),
 			true, 5,
 		},
 		{
-			prev4.append(), snap4,
+			snap4, prev4.append(),
 			true, 5,
 		},
 	} {
 		t.Run("", func(t *testing.T) {
-			u := newUnstableForTesting(tt.ls, tt.snap)
+			u := newUnstableForTesting(tt.snap, tt.ls)
 			u.checkInvariants(t)
 
 			index, ok := u.maybeFirstIndex()
@@ -90,17 +90,17 @@ func TestLastIndex(t *testing.T) {
 	prev4 := entryID{term: 1, index: 4}
 	snap4 := &pb.Snapshot{Metadata: pb.SnapshotMetadata{Index: 4, Term: 1}}
 	for _, tt := range []struct {
-		ls     logSlice
 		snap   *pb.Snapshot
+		ls     logSlice
 		windex uint64
 	}{
-		{prev4.append(1), nil, 5}, // last in entries
-		{prev4.append(1), snap4, 5},
-		{prev4.append(), snap4, 4}, // last in snapshot
-		{logSlice{}, nil, 0},       // empty unstable
+		{nil, prev4.append(1), 5}, // last in entries
+		{snap4, prev4.append(1), 5},
+		{snap4, prev4.append(), 4}, // last in snapshot
+		{nil, logSlice{}, 0},       // empty unstable
 	} {
 		t.Run("", func(t *testing.T) {
-			u := newUnstableForTesting(tt.ls, tt.snap)
+			u := newUnstableForTesting(tt.snap, tt.ls)
 			u.checkInvariants(t)
 			require.Equal(t, tt.windex, u.lastIndex())
 		})
@@ -111,8 +111,8 @@ func TestUnstableMaybeTerm(t *testing.T) {
 	prev4 := entryID{term: 1, index: 4}
 	snap4 := &pb.Snapshot{Metadata: pb.SnapshotMetadata{Index: 4, Term: 1}}
 	for _, tt := range []struct {
-		ls    logSlice
 		snap  *pb.Snapshot
+		ls    logSlice
 		index uint64
 
 		wok   bool
@@ -120,59 +120,59 @@ func TestUnstableMaybeTerm(t *testing.T) {
 	}{
 		// term from entries
 		{
-			prev4.append(1), nil,
+			nil, prev4.append(1),
 			5,
 			true, 1,
 		},
 		{
-			prev4.append(1), nil,
+			nil, prev4.append(1),
 			6,
 			false, 0,
 		},
 		{
-			prev4.append(1), nil,
+			nil, prev4.append(1),
 			4,
 			true, 1,
 		},
 		{
-			prev4.append(1), snap4,
+			snap4, prev4.append(1),
 			5,
 			true, 1,
 		},
 		{
-			prev4.append(1), snap4,
+			snap4, prev4.append(1),
 			6,
 			false, 0,
 		},
 		// term from snapshot
 		{
-			prev4.append(1), snap4,
+			snap4, prev4.append(1),
 			4,
 			true, 1,
 		},
 		{
-			prev4.append(1), snap4,
+			snap4, prev4.append(1),
 			3,
 			false, 0,
 		},
 		{
-			prev4.append(), snap4,
+			snap4, prev4.append(),
 			5,
 			false, 0,
 		},
 		{
-			prev4.append(), snap4,
+			snap4, prev4.append(),
 			4,
 			true, 1,
 		},
 		{
-			prev4.append(), nil,
+			nil, prev4.append(),
 			5,
 			false, 0,
 		},
 	} {
 		t.Run("", func(t *testing.T) {
-			u := newUnstableForTesting(tt.ls, tt.snap)
+			u := newUnstableForTesting(tt.snap, tt.ls)
 			u.checkInvariants(t)
 
 			term, ok := u.maybeTerm(tt.index)
@@ -184,8 +184,8 @@ func TestUnstableMaybeTerm(t *testing.T) {
 
 func TestUnstableRestore(t *testing.T) {
 	u := newUnstableForTesting(
-		entryID{term: 1, index: 4}.append(1),
 		&pb.Snapshot{Metadata: pb.SnapshotMetadata{Index: 4, Term: 1}},
+		entryID{term: 1, index: 4}.append(1),
 	)
 	u.inProgress = 5
 	u.checkInvariants(t)
@@ -227,7 +227,7 @@ func TestUnstableNextEntries(t *testing.T) {
 		},
 	} {
 		t.Run("", func(t *testing.T) {
-			u := newUnstableForTesting(tt.ls, nil /* snap */)
+			u := newUnstableForTesting(nil /* snap */, tt.ls)
 			u.inProgress = tt.inProgress
 			u.checkInvariants(t)
 			require.Equal(t, tt.wentries, u.nextEntries())
@@ -239,30 +239,30 @@ func TestUnstableNextSnapshot(t *testing.T) {
 	prev4 := entryID{term: 1, index: 4}
 	snap4 := &pb.Snapshot{Metadata: pb.SnapshotMetadata{Index: 4, Term: 1}}
 	for _, tt := range []struct {
-		prev       entryID
 		snap       *pb.Snapshot
+		prev       entryID
 		inProgress uint64
 
 		wsnapshot *pb.Snapshot
 	}{
 		// snapshot not unstable
 		{
-			entryID{}, nil, 0,
+			nil, entryID{}, 0,
 			nil,
 		},
 		// snapshot not in progress
 		{
-			prev4, snap4, 0,
+			snap4, prev4, 0,
 			snap4,
 		},
 		// snapshot in progress
 		{
-			prev4, snap4, 4,
+			snap4, prev4, 4,
 			nil,
 		},
 	} {
 		t.Run("", func(t *testing.T) {
-			u := newUnstableForTesting(tt.prev.append(), tt.snap)
+			u := newUnstableForTesting(tt.snap, tt.prev.append())
 			u.inProgress = tt.inProgress
 			u.checkInvariants(t)
 			require.Equal(t, tt.wsnapshot, u.nextSnapshot())
@@ -274,67 +274,67 @@ func TestUnstableAcceptInProgress(t *testing.T) {
 	prev4 := entryID{term: 1, index: 4}
 	snap4 := &pb.Snapshot{Metadata: pb.SnapshotMetadata{Index: 4, Term: 1}}
 	for _, tt := range []struct {
-		ls          logSlice
 		snap        *pb.Snapshot
+		ls          logSlice
 		inProgress  uint64
 		winProgress uint64
 	}{
 		{
-			prev4.append(), nil, // no entries
+			nil, prev4.append(), // no entries
 			4, 4,
 		},
 		{
-			prev4.append(1), nil,
+			nil, prev4.append(1),
 			4, 5, // entries not in progress
 		},
 		{
-			prev4.append(1, 1), nil,
+			nil, prev4.append(1, 1),
 			4, 6, // entries not in progress
 		},
 		{
-			prev4.append(1, 1), nil,
+			nil, prev4.append(1, 1),
 			5, 6, // in-progress to the first entry
 		},
 		{
-			prev4.append(1, 1), nil,
+			nil, prev4.append(1, 1),
 			6, 6, // in-progress to the second entry
 		},
 		// with snapshot
 		{
-			prev4.append(), snap4, // no entries
+			snap4, prev4.append(), // no entries
 			0, 4, // snapshot not already in progress
 		},
 		{
-			prev4.append(1), snap4,
+			snap4, prev4.append(1),
 			0, 5, // snapshot/entries not in progress
 		},
 		{
-			prev4.append(1, 1), snap4,
+			snap4, prev4.append(1, 1),
 			0, 6, // snapshot/entries not in progress
 		},
 		{
-			prev4.append(), snap4,
+			snap4, prev4.append(),
 			4, 4, // snapshot in progress, entries not in progress
 		},
 		{
-			prev4.append(1), snap4,
+			snap4, prev4.append(1),
 			4, 5, // snapshot in progress, entries not in progress
 		},
 		{
-			prev4.append(1, 1), snap4,
+			snap4, prev4.append(1, 1),
 			4, 6, // snapshot in progress, entries not in progress
 		},
 		{
-			prev4.append(1, 1), snap4,
+			snap4, prev4.append(1, 1),
 			5, 6, // snapshot and first entry in progress
 		},
 		{
-			prev4.append(1, 1), snap4,
+			snap4, prev4.append(1, 1),
 			6, 6, // snapshot and two entries in progress
 		},
 	} {
 		t.Run("", func(t *testing.T) {
-			u := newUnstableForTesting(tt.ls, tt.snap)
+			u := newUnstableForTesting(tt.snap, tt.ls)
 			u.inProgress = tt.inProgress
 			u.checkInvariants(t)
 
@@ -349,9 +349,9 @@ func TestUnstableStableTo(t *testing.T) {
 	prev4 := entryID{term: 1, index: 4}
 	snap4 := &pb.Snapshot{Metadata: pb.SnapshotMetadata{Index: 4, Term: 1}}
 	for _, tt := range []struct {
+		snap        *pb.Snapshot
 		ls          logSlice
 		inProgress  uint64
-		snap        *pb.Snapshot
 		index, term uint64
 
 		wprev       uint64
@@ -359,75 +359,75 @@ func TestUnstableStableTo(t *testing.T) {
 		wlen        int
 	}{
 		{
-			logSlice{}, 0, nil,
+			nil, logSlice{}, 0,
 			5, 1,
 			0, 0, 0,
 		},
 		{
-			prev4.append(1), 5, nil,
+			nil, prev4.append(1), 5,
 			5, 1, // stable to the first entry
 			5, 5, 0,
 		},
 		{
-			prev4.append(1, 1), 5, nil,
+			nil, prev4.append(1, 1), 5,
 			5, 1, // stable to the first entry
 			5, 5, 1,
 		},
 		{
-			prev4.append(1, 1), 6, nil,
+			nil, prev4.append(1, 1), 6,
 			5, 1, // stable to the first entry and in-progress ahead
 			5, 6, 1,
 		},
 		{
-			entryID{term: 1, index: 5}.append(2), 6, nil,
+			nil, entryID{term: 1, index: 5}.append(2), 6,
 			6, 1, // stable to the first entry and term mismatch
 			5, 6, 1,
 		},
 		{
-			prev4.append(1), 5, nil,
+			nil, prev4.append(1), 5,
 			4, 1, // stable to old entry
 			4, 5, 1,
 		},
 		{
-			prev4.append(1), 5, nil,
+			nil, prev4.append(1), 5,
 			4, 2, // stable to old entry
 			4, 5, 1,
 		},
 		// with snapshot
 		{
-			prev4.append(1), 5, snap4,
+			snap4, prev4.append(1), 5,
 			5, 1, // stable to the first entry
 			5, 5, 0,
 		},
 		{
-			prev4.append(1, 1), 5, snap4,
+			snap4, prev4.append(1, 1), 5,
 			5, 1, // stable to the first entry
 			5, 5, 1,
 		},
 		{
-			prev4.append(1, 1), 6, snap4,
+			snap4, prev4.append(1, 1), 6,
 			5, 1, // stable to the first entry and in-progress ahead
 			5, 6, 1,
 		},
 		{
-			entryID{term: 1, index: 5}.append(2), 6,
 			&pb.Snapshot{Metadata: pb.SnapshotMetadata{Index: 5, Term: 1}},
+			entryID{term: 1, index: 5}.append(2), 6,
 			6, 1, // stable to the first entry and term mismatch
 			5, 6, 1,
 		},
 		{
-			prev4.append(1), 5, snap4,
+			snap4, prev4.append(1), 5,
 			4, 1, // stable to snapshot
 			4, 5, 1,
 		},
 		{
-			prev4.append(2), 5, snap4,
+			snap4, prev4.append(2), 5,
 			4, 1, // stable to old entry
 			4, 5, 1,
 		},
 	} {
 		t.Run("", func(t *testing.T) {
-			u := newUnstableForTesting(tt.ls, tt.snap)
+			u := newUnstableForTesting(tt.snap, tt.ls)
 			u.inProgress = tt.inProgress
 			u.checkInvariants(t)
 
@@ -447,9 +447,9 @@ func TestUnstableStableTo(t *testing.T) {
 func TestUnstableTruncateAndAppend(t *testing.T) {
 	prev4 := entryID{term: 1, index: 4}
 	for _, tt := range []struct {
+		snap       *pb.Snapshot
 		ls         logSlice
 		inProgress uint64
-		snap       *pb.Snapshot
 		app        logSlice
 
 		want        logSlice
@@ -457,64 +457,64 @@ func TestUnstableTruncateAndAppend(t *testing.T) {
 	}{
 		// append to the end
 		{
-			prev4.append(1), 4, nil,
+			nil, prev4.append(1), 4,
 			entryID{term: 1, index: 5}.append(1, 1),
 			prev4.append(1, 1, 1),
 			4,
 		},
 		{
-			prev4.append(1), 5, nil,
+			nil, prev4.append(1), 5,
 			entryID{term: 1, index: 5}.append(1, 1),
 			prev4.append(1, 1, 1),
 			5,
 		},
 		// replace the unstable entries
 		{
-			prev4.append(1), 4, nil,
+			nil, prev4.append(1), 4,
 			prev4.append(2, 2),
 			prev4.append(2, 2),
 			4,
 		},
 		{
-			prev4.append(1), 4, nil,
+			nil, prev4.append(1), 4,
 			entryID{term: 1, index: 3}.append(2, 2, 2),
 			entryID{term: 1, index: 3}.append(2, 2, 2),
 			3,
 		},
 		{
-			prev4.append(1), 5, nil,
+			nil, prev4.append(1), 5,
 			prev4.append(2, 2),
 			prev4.append(2, 2),
 			4,
 		},
 		// truncate the existing entries and append
 		{
-			prev4.append(1, 1, 1), 4, nil,
+			nil, prev4.append(1, 1, 1), 4,
 			entryID{term: 1, index: 5}.append(2),
 			prev4.append(1, 2),
 			4,
 		},
 		{
-			prev4.append(1, 1, 1), 4, nil,
+			nil, prev4.append(1, 1, 1), 4,
 			entryID{term: 1, index: 6}.append(2, 2),
 			prev4.append(1, 1, 2, 2),
 			4,
 		},
 		{
-			prev4.append(1, 1, 1), 5, nil,
+			nil, prev4.append(1, 1, 1), 5,
 			entryID{term: 1, index: 5}.append(2),
 			prev4.append(1, 2),
 			5,
 		},
 		{
-			prev4.append(1, 1, 1), 6, nil,
+			nil, prev4.append(1, 1, 1), 6,
 			entryID{term: 1, index: 5}.append(2),
 			prev4.append(1, 2),
 			5,
 		},
 	} {
 		t.Run("", func(t *testing.T) {
-			u := newUnstableForTesting(tt.ls, tt.snap)
+			u := newUnstableForTesting(tt.snap, tt.ls)
 			u.inProgress = tt.inProgress
 			u.checkInvariants(t)
 
