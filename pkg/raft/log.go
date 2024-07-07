@@ -107,7 +107,7 @@ func (l *raftLog) String() string {
 	// TODO(pav-kv): clean-up this message. It will change all the datadriven
 	// tests, so do it in a contained PR.
 	return fmt.Sprintf("committed=%d, applied=%d, applying=%d, unstable.offset=%d, unstable.offsetInProgress=%d, len(unstable.Entries)=%d",
-		l.committed, l.applied, l.applying, l.unstable.prev.index+1, l.unstable.entryInProgress+1, len(l.unstable.entries))
+		l.committed, l.applied, l.applying, l.unstable.prev.index+1, l.unstable.inProgress+1, len(l.unstable.entries))
 }
 
 // accTerm returns the term of the leader whose append was accepted into the log

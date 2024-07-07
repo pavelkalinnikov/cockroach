@@ -26,23 +26,23 @@ import (
 
 func newUnstableForTesting(ls logSlice, snap *pb.Snapshot) unstable {
 	return unstable{
-		snapshot:        snap,
-		logSlice:        ls,
-		entryInProgress: ls.prev.index,
-		logger:          discardLogger,
+		snapshot:   snap,
+		logSlice:   ls,
+		inProgress: ls.prev.index,
+		logger:     discardLogger,
 	}
 }
 
 func (u *unstable) checkInvariants(t testing.TB) {
 	t.Helper()
 	require.NoError(t, u.logSlice.valid())
-	require.LessOrEqual(t, u.entryInProgress, u.lastIndex())
+	require.LessOrEqual(t, u.inProgress, u.lastIndex())
 	if u.snapshot != nil {
 		require.Equal(t, u.snapshot.Metadata.Term, u.prev.term)
 		require.Equal(t, u.snapshot.Metadata.Index, u.prev.index)
-		require.True(t, u.entryInProgress == 0 || u.entryInProgress >= u.prev.index)
+		require.True(t, u.inProgress == 0 || u.inProgress >= u.prev.index)
 	} else {
-		require.GreaterOrEqual(t, u.entryInProgress, u.prev.index)
+		require.GreaterOrEqual(t, u.inProgress, u.prev.index)
 	}
 }
 
@@ -187,7 +187,7 @@ func TestUnstableRestore(t *testing.T) {
 		entryID{term: 1, index: 4}.append(1),
 		&pb.Snapshot{Metadata: pb.SnapshotMetadata{Index: 4, Term: 1}},
 	)
-	u.entryInProgress = 5
+	u.inProgress = 5
 	u.checkInvariants(t)
 
 	s := snapshot{
@@ -197,7 +197,7 @@ func TestUnstableRestore(t *testing.T) {
 	require.True(t, u.restore(s))
 	u.checkInvariants(t)
 
-	require.Zero(t, u.entryInProgress)
+	require.Zero(t, u.inProgress)
 	require.Zero(t, len(u.entries))
 	require.Equal(t, &s.snap, u.snapshot)
 }
@@ -205,8 +205,8 @@ func TestUnstableRestore(t *testing.T) {
 func TestUnstableNextEntries(t *testing.T) {
 	prev4 := entryID{term: 1, index: 4}
 	for _, tt := range []struct {
-		ls              logSlice
-		entryInProgress uint64
+		ls         logSlice
+		inProgress uint64
 
 		wentries []pb.Entry
 	}{
@@ -228,7 +228,7 @@ func TestUnstableNextEntries(t *testing.T) {
 	} {
 		t.Run("", func(t *testing.T) {
 			u := newUnstableForTesting(tt.ls, nil /* snap */)
-			u.entryInProgress = tt.entryInProgress
+			u.inProgress = tt.inProgress
 			u.checkInvariants(t)
 			require.Equal(t, tt.wentries, u.nextEntries())
 		})
@@ -239,9 +239,9 @@ func TestUnstableNextSnapshot(t *testing.T) {
 	prev4 := entryID{term: 1, index: 4}
 	snap4 := &pb.Snapshot{Metadata: pb.SnapshotMetadata{Index: 4, Term: 1}}
 	for _, tt := range []struct {
-		prev            entryID
-		snap            *pb.Snapshot
-		entryInProgress uint64
+		prev       entryID
+		snap       *pb.Snapshot
+		inProgress uint64
 
 		wsnapshot *pb.Snapshot
 	}{
@@ -263,7 +263,7 @@ func TestUnstableNextSnapshot(t *testing.T) {
 	} {
 		t.Run("", func(t *testing.T) {
 			u := newUnstableForTesting(tt.prev.append(), tt.snap)
-			u.entryInProgress = tt.entryInProgress
+			u.inProgress = tt.inProgress
 			u.checkInvariants(t)
 			require.Equal(t, tt.wsnapshot, u.nextSnapshot())
 		})
@@ -274,11 +274,10 @@ func TestUnstableAcceptInProgress(t *testing.T) {
 	prev4 := entryID{term: 1, index: 4}
 	snap4 := &pb.Snapshot{Metadata: pb.SnapshotMetadata{Index: 4, Term: 1}}
 	for _, tt := range []struct {
-		ls              logSlice
-		snap            *pb.Snapshot
-		entryInProgress uint64
-
-		wentryInProgress uint64
+		ls          logSlice
+		snap        *pb.Snapshot
+		inProgress  uint64
+		winProgress uint64
 	}{
 		{
 			prev4.append(), nil, // no entries
@@ -336,12 +335,12 @@ func TestUnstableAcceptInProgress(t *testing.T) {
 	} {
 		t.Run("", func(t *testing.T) {
 			u := newUnstableForTesting(tt.ls, tt.snap)
-			u.entryInProgress = tt.entryInProgress
+			u.inProgress = tt.inProgress
 			u.checkInvariants(t)
 
 			u.acceptInProgress()
 			u.checkInvariants(t)
-			require.Equal(t, tt.wentryInProgress, u.entryInProgress)
+			require.Equal(t, tt.winProgress, u.inProgress)
 		})
 	}
 }
@@ -350,14 +349,14 @@ func TestUnstableStableTo(t *testing.T) {
 	prev4 := entryID{term: 1, index: 4}
 	snap4 := &pb.Snapshot{Metadata: pb.SnapshotMetadata{Index: 4, Term: 1}}
 	for _, tt := range []struct {
-		ls              logSlice
-		entryInProgress uint64
-		snap            *pb.Snapshot
-		index, term     uint64
+		ls          logSlice
+		inProgress  uint64
+		snap        *pb.Snapshot
+		index, term uint64
 
-		wprev            uint64
-		wentryInProgress uint64
-		wlen             int
+		wprev       uint64
+		winProgress uint64
+		wlen        int
 	}{
 		{
 			logSlice{}, 0, nil,
@@ -429,7 +428,7 @@ func TestUnstableStableTo(t *testing.T) {
 	} {
 		t.Run("", func(t *testing.T) {
 			u := newUnstableForTesting(tt.ls, tt.snap)
-			u.entryInProgress = tt.entryInProgress
+			u.inProgress = tt.inProgress
 			u.checkInvariants(t)
 
 			if u.snapshot != nil {
@@ -439,7 +438,7 @@ func TestUnstableStableTo(t *testing.T) {
 			u.stableTo(entryID{term: tt.term, index: tt.index})
 			u.checkInvariants(t)
 			require.Equal(t, tt.wprev, u.prev.index)
-			require.Equal(t, tt.wentryInProgress, u.entryInProgress)
+			require.Equal(t, tt.winProgress, u.inProgress)
 			require.Equal(t, tt.wlen, len(u.entries))
 		})
 	}
@@ -448,13 +447,13 @@ func TestUnstableStableTo(t *testing.T) {
 func TestUnstableTruncateAndAppend(t *testing.T) {
 	prev4 := entryID{term: 1, index: 4}
 	for _, tt := range []struct {
-		ls              logSlice
-		entryInProgress uint64
-		snap            *pb.Snapshot
-		app             logSlice
+		ls         logSlice
+		inProgress uint64
+		snap       *pb.Snapshot
+		app        logSlice
 
-		want             logSlice
-		wentryInProgress uint64
+		want        logSlice
+		winProgress uint64
 	}{
 		// append to the end
 		{
@@ -516,13 +515,13 @@ func TestUnstableTruncateAndAppend(t *testing.T) {
 	} {
 		t.Run("", func(t *testing.T) {
 			u := newUnstableForTesting(tt.ls, tt.snap)
-			u.entryInProgress = tt.entryInProgress
+			u.inProgress = tt.inProgress
 			u.checkInvariants(t)
 
 			u.truncateAndAppend(tt.app)
 			u.checkInvariants(t)
 			require.Equal(t, tt.want, u.logSlice)
-			require.Equal(t, tt.wentryInProgress, u.entryInProgress)
+			require.Equal(t, tt.winProgress, u.inProgress)
 		})
 	}
 }

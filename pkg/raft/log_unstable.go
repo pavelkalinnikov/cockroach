@@ -80,19 +80,19 @@ type unstable struct {
 	// state is consistent with the leader log at this term.
 	logSlice
 
-	// entryInProgress is the index of the last entry in logSlice already present
-	// in, or being written to storage. When there is a pending snapshot not yet
-	// sent to storage, entryInProgress == 0, meaning that the entire log is about
-	// to be rewritten by the snapshot and logSlice.
+	// inProgress is the index of the last entry in logSlice already present in,
+	// or being written to storage. When there is a pending snapshot not yet sent
+	// to storage, inProgress == 0, meaning that the entire log is about to be
+	// rewritten by the snapshot and logSlice.
 	//
-	// Invariant: snapshot == nil ==> prev.index <= entryInProgress <= lastIndex()
+	// Invariant: snapshot == nil ==> prev.index <= inProgress <= lastIndex()
 	// Invariant: snapshot != nil ==>
-	//	entryInProgress == 0 || prev.index <= entryInProgress <= lastIndex()
+	//	inProgress == 0 || prev.index <= inProgress <= lastIndex()
 	//
 	// The last invariant enforces the order of handling a situation when there is
 	// both a snapshot and entries. The snapshot must be sent to storage first, or
 	// together with the entries.
-	entryInProgress uint64
+	inProgress uint64
 
 	logger Logger
 }
@@ -114,9 +114,9 @@ func newUnstable(last entryID, logger Logger) unstable {
 	// leader Term) gives us more information about the log, and then allows
 	// bumping its commit index sooner than when the next MsgApp arrives.
 	return unstable{
-		logSlice:        logSlice{term: last.term, prev: last},
-		entryInProgress: last.index,
-		logger:          logger,
+		logSlice:   logSlice{term: last.term, prev: last},
+		inProgress: last.index,
+		logger:     logger,
 	}
 }
 
@@ -140,18 +140,18 @@ func (u *unstable) maybeTerm(i uint64) (uint64, bool) {
 // nextEntries returns the unstable entries that are not already in the process
 // of being written to storage.
 func (u *unstable) nextEntries() []pb.Entry {
-	if u.entryInProgress == u.lastIndex() {
+	if u.inProgress == u.lastIndex() {
 		return nil
-	} else if u.entryInProgress == 0 {
+	} else if u.inProgress == 0 {
 		return u.entries
 	}
-	return u.entries[u.entryInProgress-u.prev.index:]
+	return u.entries[u.inProgress-u.prev.index:]
 }
 
 // nextSnapshot returns the unstable snapshot, if one exists that is not already
 // in the process of being written to storage.
 func (u *unstable) nextSnapshot() *pb.Snapshot {
-	if u.snapshot == nil || u.entryInProgress != 0 {
+	if u.snapshot == nil || u.inProgress != 0 {
 		return nil
 	}
 	return u.snapshot
@@ -163,7 +163,7 @@ func (u *unstable) nextSnapshot() *pb.Snapshot {
 // entries/snapshots added after a call to acceptInProgress will be returned
 // from those methods, until the next call to acceptInProgress.
 func (u *unstable) acceptInProgress() {
-	u.entryInProgress = u.lastIndex()
+	u.inProgress = u.lastIndex()
 }
 
 // stableTo marks entries up to the entry with the specified (index, term) as
@@ -197,10 +197,10 @@ func (u *unstable) stableTo(id entryID) {
 			id, DescribeSnapshot(*u.snapshot))
 	}
 	u.logSlice = u.forward(id.index)
-	// TODO(pav-kv): why can id.index overtake u.entryInProgress? Probably bugs in
+	// TODO(pav-kv): why can id.index overtake u.inProgress? Probably bugs in
 	// tests using the log writes incorrectly, e.g. TestLeaderStartReplication
 	// takes nextUnstableEnts() without acceptInProgress().
-	u.entryInProgress = max(u.entryInProgress, id.index)
+	u.inProgress = max(u.inProgress, id.index)
 	u.shrinkEntriesArray()
 }
 
@@ -225,7 +225,7 @@ func (u *unstable) shrinkEntriesArray() {
 
 func (u *unstable) stableSnapTo(i uint64) {
 	if u.snapshot != nil && u.snapshot.Metadata.Index == i {
-		u.entryInProgress = max(i, u.entryInProgress)
+		u.inProgress = max(i, u.inProgress)
 		u.snapshot = nil
 	}
 }
@@ -235,7 +235,7 @@ func (u *unstable) stableSnapTo(i uint64) {
 func (u *unstable) restore(s snapshot) bool {
 	// Index 0 is reserved for the "dummy" entry that never exists. Any committed
 	// state / snapshot (including the initial snapshot) is at index > 0. We do
-	// this check here to also guard the invariant: entryInProgress == 0 means
+	// this check here to also guard the invariant: inProgress == 0 means that
 	// u.snapshot is not yet sent to storage.
 	if s.lastIndex() == 0 {
 		return false
@@ -261,7 +261,7 @@ func (u *unstable) restore(s snapshot) bool {
 
 	u.snapshot = &s.snap
 	u.logSlice = logSlice{term: term, prev: s.lastEntryID()}
-	u.entryInProgress = 0
+	u.inProgress = 0
 	return true
 }
 
@@ -317,7 +317,7 @@ func (u *unstable) truncateAndAppend(a logSlice) bool {
 		return false
 	}
 
-	// Truncate the log and append new entries. Regress the entryInProgress mark
+	// Truncate the log and append new entries. Regress the inProgress mark
 	// to reflect that the truncated entries are no longer considered in progress.
 	if a.prev.index <= u.prev.index {
 		u.logSlice = a // replace the entire logSlice with the latest append
@@ -333,7 +333,7 @@ func (u *unstable) truncateAndAppend(a logSlice) bool {
 		u.entries = append(keep[:len(keep):len(keep)], a.entries...)
 		u.logger.Infof("truncate the unstable entries before index %d", a.prev.index+1)
 	}
-	u.entryInProgress = min(u.entryInProgress, a.prev.index)
+	u.inProgress = min(u.inProgress, a.prev.index)
 	return true
 }
 
