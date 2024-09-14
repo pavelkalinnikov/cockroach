@@ -313,22 +313,21 @@ func (pc proposalCreator) newProposal(ba *kvpb.BatchRequest) *ProposalData {
 			}
 		}
 	}
-	p := NewProposalData(func() ProposalData {
-		return ProposalData{
-			ctx:   context.Background(),
-			idKey: "test-cmd",
-			command: &kvserverpb.RaftCommand{
-				ReplicatedEvalResult: kvserverpb.ReplicatedEvalResult{
-					IsLeaseRequest: isLeaseRequest,
-					State:          &kvserverpb.ReplicaState{Lease: lease},
-					ChangeReplicas: cr,
-				},
-			},
-			Request:     ba,
-			leaseStatus: pc.lease,
-		}
-	})
-	p.encodedCommand = pc.encodeProposal(p)
+	_, _, _ = lease, isLeaseRequest, cr
+	p := NewProposal(ba, lease, isLeaseRequest, cr)
+	/*
+		p.ctx = context.Background()
+		p.idKey = "test-cmd"
+		p.command = &kvserverpb.RaftCommand{
+			ReplicatedEvalResult: kvserverpb.ReplicatedEvalResult{
+				IsLeaseRequest: isLeaseRequest,
+				State:          &kvserverpb.ReplicaState{Lease: lease},
+				ChangeReplicas: cr,
+			}}
+		p.Request = ba
+		p.leaseStatus = pc.lease
+		p.encodedCommand = pc.encodeProposal(p)
+	*/
 	return p
 }
 

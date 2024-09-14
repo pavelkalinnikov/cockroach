@@ -25,6 +25,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/mpsc"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/raftlog"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/readsummary/rspb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/uncertainty"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
@@ -234,6 +235,35 @@ func NewProposalData(init func() ProposalData) *ProposalData {
 		node mpsc.Node[*ProposalData]
 		data ProposalData
 	}{data: init()}
+	s.node.Value = &s.data
+	s.data.self = &s.node
+	return &s.data
+}
+
+func NewProposal(
+	ba *kvpb.BatchRequest, lease *roachpb.Lease, isLeaseRequest bool, cr *kvserverpb.ChangeReplicas,
+) *ProposalData {
+	s := struct {
+		node mpsc.Node[*ProposalData]
+		data ProposalData
+	}{data: ProposalData{
+		ctx:   context.Background(),
+		idKey: "test-cmd",
+		command: &kvserverpb.RaftCommand{
+			ReplicatedEvalResult: kvserverpb.ReplicatedEvalResult{
+				IsLeaseRequest: isLeaseRequest,
+				State:          &kvserverpb.ReplicaState{Lease: lease},
+				ChangeReplicas: cr,
+			}},
+		Request:     ba,
+		leaseStatus: kvserverpb.LeaseStatus{},
+	}}
+	b, err := raftlog.EncodeCommand(context.Background(), s.data.command, s.data.idKey, raftlog.EncodeOptions{})
+	if err != nil {
+		panic(err)
+	}
+	s.data.encodedCommand = b
+
 	s.node.Value = &s.data
 	s.data.self = &s.node
 	return &s.data
