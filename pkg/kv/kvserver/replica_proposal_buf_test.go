@@ -51,10 +51,13 @@ import (
 // testProposer is a testing implementation of proposer.
 type testProposer struct {
 	syncutil.RWMutex
-	clock      *hlc.Clock
-	ds         destroyStatus
-	fi         kvpb.RaftIndex
-	lai        kvpb.LeaseAppliedIndex
+	clock *hlc.Clock
+	ds    destroyStatus
+	fi    kvpb.RaftIndex
+	lai   kvpb.LeaseAppliedIndex
+
+	update chan struct{}
+
 	enqueued   int
 	registered int
 
@@ -173,6 +176,10 @@ func (t *testProposer) leaseAppliedIndex() kvpb.LeaseAppliedIndex {
 
 func (t *testProposer) enqueueUpdateCheck() {
 	t.enqueued++
+	select {
+	case t.update <- struct{}{}:
+	default:
+	}
 }
 
 func (t *testProposer) closedTimestampTarget() hlc.Timestamp {
@@ -1152,7 +1159,7 @@ func benchProposalBufferInsert(b *testing.B) {
 	ctx := context.Background()
 
 	r := &testProposerRaft{}
-	p := testProposer{raftGroup: r}
+	p := testProposer{raftGroup: r, update: make(chan struct{}, 1)}
 	var pb propBuf
 	var pc proposalCreator
 	clock := hlc.NewClockForTesting(nil)
@@ -1173,7 +1180,20 @@ func benchProposalBufferInsert(b *testing.B) {
 	for i := 0; i < workers; i++ {
 		g.Go(worker)
 	}
+	go func() {
+		for {
+			_, ok := <-p.update
+			if !ok {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+			p.Lock()
+			require.NoError(b, pb.flushLocked(ctx))
+			p.Unlock()
+		}
+	}()
 	require.NoError(b, g.Wait())
+	close(p.update)
 	if false {
 		return
 	}

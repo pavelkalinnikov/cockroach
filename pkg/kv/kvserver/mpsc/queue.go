@@ -11,6 +11,7 @@
 package mpsc
 
 import (
+	"fmt"
 	"sync/atomic"
 	"unsafe"
 )
@@ -94,6 +95,7 @@ func (q *QueueLocked[T]) Pop() *Node[T] {
 //
 // The enclosing lock must be locked for writes.
 func (q *QueueLocked[T]) Flush() List[T] {
+	fmt.Println("Flush", q.len)
 	first := q.head.Next
 	if first == nil {
 		return List[T]{}
