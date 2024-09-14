@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -1143,6 +1144,58 @@ func TestProposalBufferClosedTimestamp(t *testing.T) {
 				require.Equal(t, tc.prevClosedTimestamp, b.assignedClosedTimestamp)
 			}
 		})
+	}
+}
+
+func benchProposalBufferInsert(b *testing.B) {
+	const workers = 8
+	const propsPerWorker = 1000000
+	const totalProps = workers * propsPerWorker
+	ctx := context.Background()
+
+	r := &testProposerRaft{}
+	p := testProposer{raftGroup: r}
+	var pb propBuf
+	var pc proposalCreator
+	clock := hlc.NewClockForTesting(nil)
+	pb.Init(&p, tracker.NewLockfreeTracker(), clock, cluster.MakeTestingClusterSettings())
+
+	worker := func() error {
+		for i := 0; i < propsPerWorker; i++ {
+			pd := pc.newPutProposal(hlc.Timestamp{})
+			_, tok := pb.TrackEvaluatingRequest(ctx, hlc.MinTimestamp)
+			if err := pb.Insert(ctx, pd, tok); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	g, _ := errgroup.WithContext(ctx)
+	for i := 0; i < workers; i++ {
+		g.Go(worker)
+	}
+	require.NoError(b, g.Wait())
+
+	// require.Equal(b, totalProps, pb.evalTracker.Count())
+	// require.Equal(b, uint64(totalProps), pb.q.RLocked().Len())
+
+	// Flush the buffer.
+	require.NoError(b, pb.flushLocked(ctx))
+	proposals := r.consumeProposals()
+	require.Len(b, proposals, totalProps)
+}
+
+func BenchmarkProposalBufferInsert(b *testing.B) {
+	defer leaktest.AfterTest(b)()
+	defer log.Scope(b).Close(b)
+
+	b.ReportAllocs()
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	fmt.Println("MaxProcs", runtime.GOMAXPROCS(0))
+
+	for n := b.N; n > 0; n-- {
+		benchProposalBufferInsert(b)
 	}
 }
 
