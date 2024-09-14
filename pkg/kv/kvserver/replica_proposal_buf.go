@@ -1084,8 +1084,8 @@ func (b *propBuf) MaybeForwardClosedLocked(ctx context.Context, target hlc.Times
 	return b.forwardClosedTimestampLocked(target)
 }
 
-const propBufArrayMinSize = 4
-const propBufArrayMaxSize = 256
+const propBufArrayMinSize = 8
+const propBufArrayMaxSize = 1 << 25
 const propBufArrayShrinkDelay = 16
 
 // propBufArray is a dynamically-sized array of ProposalData pointers. The
@@ -1137,9 +1137,10 @@ func (a *propBufArray) adjustSize(used int) {
 	case used >= cur:
 		// The array is too small. Grow it if possible.
 		a.shrink = 0
-		next := 2 * cur
+		next := cur << 10
 		if next <= propBufArrayMaxSize {
 			a.large = make([]*ProposalData, next)
+			fmt.Println("grew to", cap(a.large))
 		}
 	default:
 		// The array is a good size. Do nothing.
