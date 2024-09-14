@@ -125,7 +125,7 @@ type admitEntHandle struct {
 type singleBatchProposer interface {
 	getReplicaID() roachpb.ReplicaID
 	flowControlHandle(ctx context.Context) kvflowcontrol.Handle
-	onErrProposalDropped([]raftpb.Entry, []*ProposalData, raft.StateType)
+	onErrProposalDropped([]raftpb.Entry, mpsc.List[*ProposalData], raft.StateType)
 }
 
 // A proposer is an object that uses a propBuf to coordinate Raft proposals.
@@ -302,7 +302,8 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 	// However, there are a few more allocations below already, for slices
 	// parallel to the list of proposals. It might be not worth optimizing just
 	// one allocation, better find a way to remove all of them.
-	buf := list.Unlink()
+	// buf := list.Unlink()
+	ln := list.Len()
 
 	// Iterate through the proposals in the buffer and propose them to Raft.
 	// While doing so, build up batches of entries and submit them to Raft all
@@ -310,13 +311,12 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 	// Step can dramatically reduce the number of messages required to commit
 	// and apply them.
 
-	ents := make([]raftpb.Entry, 0, len(buf))
+	ents := make([]raftpb.Entry, 0, ln)
 	// Use this slice to track, for each entry that's proposed to raft, whether
 	// it's subject to replication admission control. Updated in tandem with
 	// slice above.
-	admitHandles := make([]admitEntHandle, 0, len(buf))
+	admitHandles := make([]admitEntHandle, 0, ln)
 	// INVARIANT: buf[firstProp:nextProp] lines up with the ents slice.
-	firstProp, nextProp := 0, 0
 
 	// Compute the closed timestamp target, which will be used to assign a closed
 	// timestamp to all proposals in this batch.
@@ -327,7 +327,9 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 	// buffer and registering each of the proposals with the proposer, but we
 	// stop trying to propose commands to raftGroup.
 	var firstErr error
-	for i, p := range buf {
+	var last *mpsc.Node[*ProposalData]
+	for i, n := 0, list.First(); n != nil; i, n, last = i+1, n.Next, n {
+		p := n.Value
 		if p == nil {
 			log.Fatalf(ctx, "unexpected nil proposal in buffer")
 			return 0, nil // unreachable, for linter
@@ -401,14 +403,17 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 			// Flush any previously batched (non-conf change) proposals to
 			// preserve the correct ordering or proposals. Later proposals
 			// will start a new batch.
-			propErr := proposeBatch(ctx, b.p, raftGroup, ents, admitHandles, buf[firstProp:nextProp])
+			batch, remaining := list.Split(last, uint64(i))
+			propErr := proposeBatch(ctx, b.p, raftGroup, ents, admitHandles, batch)
 			if propErr != nil {
 				firstErr = propErr
 				continue
 			}
+			var justThis mpsc.List[*ProposalData]
+			justThis, remaining = remaining.Split(n, 1)
+			list, i = remaining, -1
 
 			ents = ents[len(ents):]
-			firstProp, nextProp = i+1, i+1
 			admitHandles = admitHandles[len(admitHandles):]
 
 			confChangeCtx := kvserverpb.ConfChangeContext{
@@ -441,7 +446,7 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 			// that it can be shared. For now, this is fine since conf changes are
 			// internal commands anyway and unlikely to be sent at significant volume.
 			if err := proposeBatch(
-				ctx, b.p, raftGroup, sl, []admitEntHandle{{}}, []*ProposalData{p},
+				ctx, b.p, raftGroup, sl, []admitEntHandle{{}}, justThis,
 			); err != nil && !errors.Is(err, raft.ErrProposalDropped) {
 				// Silently ignore dropped proposals (they were always silently
 				// ignored prior to the introduction of ErrProposalDropped).
@@ -463,7 +468,6 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 			ents = append(ents, raftpb.Entry{
 				Data: p.encodedCommand,
 			})
-			nextProp++
 			log.VEvent(p.ctx, 2, "flushing proposal to Raft")
 
 			// We don't want deduct flow tokens for reproposed commands, and of
@@ -483,8 +487,8 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 		return 0, firstErr
 	}
 
-	propErr := proposeBatch(ctx, b.p, raftGroup, ents, admitHandles, buf[firstProp:nextProp])
-	return len(buf), propErr
+	propErr := proposeBatch(ctx, b.p, raftGroup, ents, admitHandles, list)
+	return int(ln), propErr
 }
 
 var logCampaignOnRejectLease = log.Every(10 * time.Second)
@@ -742,9 +746,9 @@ func proposeBatch(
 	raftGroup proposerRaft,
 	ents []raftpb.Entry,
 	handles []admitEntHandle,
-	props []*ProposalData,
+	props mpsc.List[*ProposalData],
 ) (_ error) {
-	if len(ents) != len(props) {
+	if uint64(len(ents)) != props.Len() {
 		return errors.AssertionFailedf("ents and props don't match up: %v and %v", ents, props)
 	}
 	if len(ents) == 0 {
@@ -761,7 +765,8 @@ func proposeBatch(
 		// ignored prior to the introduction of ErrProposalDropped).
 		// TODO(bdarnell): Handle ErrProposalDropped better.
 		// https://github.com/cockroachdb/cockroach/issues/21849
-		for _, p := range props {
+		for n := props.First(); n != nil; n = n.Next {
+			p := n.Value
 			if p.ctx != nil {
 				log.Event(p.ctx, "entry dropped")
 			}
@@ -1015,7 +1020,7 @@ func (rp *replicaProposer) withGroupLocked(fn func(raftGroup proposerRaft) error
 }
 
 func (rp *replicaProposer) onErrProposalDropped(
-	ents []raftpb.Entry, _ []*ProposalData, stateType raft.StateType,
+	ents []raftpb.Entry, _ mpsc.List[*ProposalData], stateType raft.StateType,
 ) {
 	n := int64(len(ents))
 	rp.store.metrics.RaftProposalsDropped.Inc(n)

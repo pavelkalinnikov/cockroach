@@ -115,6 +115,15 @@ type List[T any] struct {
 	len   uint64
 }
 
+func (l List[T]) First() *Node[T] { return l.first }
+
+func (l List[T]) Split(at *Node[T], ln uint64) (List[T], List[T]) {
+	next := at.Next
+	at.Next = nil
+	return List[T]{first: l.first, len: ln},
+		List[T]{first: next, len: l.len - ln}
+}
+
 func (l List[T]) Len() uint64 { return l.len }
 
 func (l List[T]) Unlink() []T {

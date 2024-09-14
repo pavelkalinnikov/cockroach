@@ -29,6 +29,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvflowcontrol/kvflowinspectpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/leases"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/mpsc"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/raftlog"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/raftutil"
 	"github.com/cockroachdb/cockroach/pkg/raft"
@@ -65,7 +66,7 @@ type testProposer struct {
 	onRejectProposalWithErrLocked func(err error)
 	// If not nil, this is called by onErrProposalDropped.
 	onProposalsDropped func(
-		ents []raftpb.Entry, proposalData []*ProposalData, stateType raft.StateType,
+		ents []raftpb.Entry, proposalData mpsc.List[*ProposalData], stateType raft.StateType,
 	)
 	// validLease is returned by ownsValidLease.
 	validLease bool
@@ -194,7 +195,7 @@ func (t *testProposer) withGroupLocked(fn func(proposerRaft) error) error {
 }
 
 func (rp *testProposer) onErrProposalDropped(
-	ents []raftpb.Entry, props []*ProposalData, typ raft.StateType,
+	ents []raftpb.Entry, props mpsc.List[*ProposalData], typ raft.StateType,
 ) {
 	if rp.onProposalsDropped == nil {
 		return
@@ -835,13 +836,14 @@ func TestProposalBufferLinesUpEntriesAndProposals(t *testing.T) {
 
 	var matchingDroppedProposalsSeen int
 	p := testProposer{
-		onProposalsDropped: func(ents []raftpb.Entry, props []*ProposalData, _ raft.StateType) {
-			require.Equal(t, len(ents), len(props))
-			for i := range ents {
+		onProposalsDropped: func(ents []raftpb.Entry, props mpsc.List[*ProposalData], _ raft.StateType) {
+			require.Equal(t, uint64(len(ents)), props.Len())
+			for i, n := 0, props.First(); n != nil; i, n = i+1, n.Next {
+				p := n.Value
 				if ents[i].Type == raftpb.EntryNormal {
-					require.Nil(t, props[i].command.ReplicatedEvalResult.ChangeReplicas)
+					require.Nil(t, p.command.ReplicatedEvalResult.ChangeReplicas)
 				} else {
-					require.NotNil(t, props[i].command.ReplicatedEvalResult.ChangeReplicas)
+					require.NotNil(t, p.command.ReplicatedEvalResult.ChangeReplicas)
 				}
 				matchingDroppedProposalsSeen++
 			}
@@ -1171,7 +1173,7 @@ func benchProposalBufferInsert(b *testing.B) {
 		g.Go(worker)
 	}
 	require.NoError(b, g.Wait())
-	if true {
+	if false {
 		return
 	}
 
