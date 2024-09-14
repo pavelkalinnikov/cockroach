@@ -26,15 +26,17 @@ type QueueLocked[T any] QueueRLocked[T]
 
 // Queue is an intrusive multi-producer single-consumer queue.
 type Queue[T any] struct {
-	head Node[T]
-	tail unsafe.Pointer // *Node[T]
-	len  uint64
+	head  Node[T]
+	tail  unsafe.Pointer // *Node[T]
+	nodes []*Node[T]
+	len   uint64
 }
 
 // NewQueue returns a new empty queue.
-func NewQueue[T any]() *Queue[T] {
+func NewQueue[T any](size int) *Queue[T] {
 	q := &Queue[T]{}
 	q.tail = unsafe.Pointer(&q.head)
+	q.nodes = make([]*Node[T], size)
 	return q
 }
 
@@ -54,11 +56,14 @@ func (q *QueueLocked[T]) Len() uint64 {
 //
 // The enclosing lock must be locked for reads.
 func (q *QueueRLocked[T]) Push(n *Node[T]) bool {
-	atomic.AddUint64(&q.len, 1)
-	n.Next = nil
-	was := (*Node[T])(atomic.SwapPointer(&q.tail, unsafe.Pointer(n)))
-	was.Next = n
-	return was == &q.head
+	pos := atomic.AddUint64(&q.len, 1)
+	q.nodes[pos-1] = n
+	return pos == 1
+	// atomic.AddUint64(&q.len, 1)
+	// n.Next = nil
+	// was := (*Node[T])(atomic.SwapPointer(&q.tail, unsafe.Pointer(n)))
+	// was.Next = n
+	// return was == &q.head
 }
 
 // Push pushes the given node to the queue. Returns true if this is the first
@@ -66,11 +71,18 @@ func (q *QueueRLocked[T]) Push(n *Node[T]) bool {
 //
 // The enclosing lock must be locked for writes.
 func (q *QueueLocked[T]) Push(n *Node[T]) bool {
+	pos := q.len
 	q.len++
-	n.Next = nil
-	(*Node[T])(q.tail).Next = n
-	q.tail = unsafe.Pointer(n)
-	return q.head.Next == n
+	q.nodes[pos] = n
+	return pos == 0
+
+	/*
+		q.len++
+		n.Next = nil
+		(*Node[T])(q.tail).Next = n
+		q.tail = unsafe.Pointer(n)
+		return q.head.Next == n
+	*/
 }
 
 // Pop pops the first entry from the queue and returns it. Returns nil if the
@@ -90,19 +102,32 @@ func (q *QueueLocked[T]) Pop() *Node[T] {
 	return first
 }
 
+type Slice[T any] []*Node[T]
+
+func (s Slice[T]) Unlink() []T {
+	values := make([]T, 0, len(s))
+	for _, n := range s {
+		values = append(values, n.Value)
+	}
+	return values
+}
+
 // Flush clears the queue and returns it as a linked list, connected by
 // Node[T].Next pointers. Returns nil if the queue is empty.
 //
 // The enclosing lock must be locked for writes.
-func (q *QueueLocked[T]) Flush() List[T] {
+func (q *QueueLocked[T]) Flush() Slice[T] {
 	fmt.Println("Flush", q.len)
-	first := q.head.Next
-	if first == nil {
-		return List[T]{}
-	}
-	q.head.Next = nil
-	q.tail = unsafe.Pointer(&q.head)
-	ln := q.len
-	q.len = 0
-	return List[T]{first: first, len: ln}
+	return q.nodes[:q.len]
+	/*
+		first := q.head.Next
+		if first == nil {
+			return List[T]{}
+		}
+		q.head.Next = nil
+		q.tail = unsafe.Pointer(&q.head)
+		ln := q.len
+		q.len = 0
+		return List[T]{first: first, len: ln}
+	*/
 }

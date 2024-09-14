@@ -21,7 +21,7 @@ func TestQueue(t *testing.T) {
 	dirty := make(chan struct{}, 1)
 
 	var mu syncutil.RWMutex
-	q := NewQueue[int]()
+	q := NewQueue[int](0)
 	insert := func(x int) {
 		mu.RLock()
 		defer mu.RUnlock()
@@ -76,7 +76,7 @@ func TestQueue(t *testing.T) {
 func BenchmarkQueue(b *testing.B) {
 	b.ReportAllocs()
 	test := func() {
-		q := NewQueue[int]()
+		q := NewQueue[int](0)
 		for i := 0; i < 1000; i++ {
 			q.RLocked().Push(&Node[int]{Value: 10})
 		}

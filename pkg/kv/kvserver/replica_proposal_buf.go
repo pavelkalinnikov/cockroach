@@ -175,7 +175,7 @@ func (b *propBuf) Init(
 	p proposer, tracker tracker.Tracker, clock *hlc.Clock, settings *cluster.Settings,
 ) {
 	b.p = p
-	b.q = mpsc.NewQueue[*ProposalData]()
+	b.q = mpsc.NewQueue[*ProposalData](8000000)
 	b.clock = clock
 	b.evalTracker = tracker
 	b.settings = settings
