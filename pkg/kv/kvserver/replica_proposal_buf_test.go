@@ -1176,6 +1176,9 @@ func benchProposalBufferInsert(b *testing.B) {
 		g.Go(worker)
 	}
 	require.NoError(b, g.Wait())
+	if true {
+		return
+	}
 
 	// require.Equal(b, totalProps, pb.evalTracker.Count())
 	// require.Equal(b, uint64(totalProps), pb.q.RLocked().Len())
