@@ -327,9 +327,9 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 	// buffer and registering each of the proposals with the proposer, but we
 	// stop trying to propose commands to raftGroup.
 	var firstErr error
-	var last *mpsc.Node[*ProposalData]
-	for i, n := 0, list.First(); n != nil; i, n, last = i+1, n.Next, n {
-		p := n.Value
+	first, next := list.Iter(), list.Iter()
+	for iter := first; iter.Valid(); iter.Move() {
+		p := iter.Value()
 		if p == nil {
 			log.Fatalf(ctx, "unexpected nil proposal in buffer")
 			return 0, nil // unreachable, for linter
@@ -403,16 +403,14 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 			// Flush any previously batched (non-conf change) proposals to
 			// preserve the correct ordering or proposals. Later proposals
 			// will start a new batch.
-			batch, remaining := list.Split(last, uint64(i))
-			propErr := proposeBatch(ctx, b.p, raftGroup, ents, admitHandles, batch)
+			propErr := proposeBatch(ctx, b.p, raftGroup, ents, admitHandles, first.Slice(next))
 			if propErr != nil {
 				firstErr = propErr
 				continue
 			}
-			var justThis mpsc.List[*ProposalData]
-			justThis, remaining = remaining.Split(n, 1)
-			list, i = remaining, -1
 
+			first = iter.Next()
+			next = first
 			ents = ents[len(ents):]
 			admitHandles = admitHandles[len(admitHandles):]
 
@@ -446,7 +444,7 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 			// that it can be shared. For now, this is fine since conf changes are
 			// internal commands anyway and unlikely to be sent at significant volume.
 			if err := proposeBatch(
-				ctx, b.p, raftGroup, sl, []admitEntHandle{{}}, justThis,
+				ctx, b.p, raftGroup, sl, []admitEntHandle{{}}, iter.Slice(first),
 			); err != nil && !errors.Is(err, raft.ErrProposalDropped) {
 				// Silently ignore dropped proposals (they were always silently
 				// ignored prior to the introduction of ErrProposalDropped).
@@ -468,6 +466,7 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 			ents = append(ents, raftpb.Entry{
 				Data: p.encodedCommand,
 			})
+			next.Move()
 			log.VEvent(p.ctx, 2, "flushing proposal to Raft")
 
 			// We don't want deduct flow tokens for reproposed commands, and of
@@ -487,7 +486,7 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 		return 0, firstErr
 	}
 
-	propErr := proposeBatch(ctx, b.p, raftGroup, ents, admitHandles, list)
+	propErr := proposeBatch(ctx, b.p, raftGroup, ents, admitHandles, first.Slice(next))
 	return int(ln), propErr
 }
 
@@ -765,9 +764,8 @@ func proposeBatch(
 		// ignored prior to the introduction of ErrProposalDropped).
 		// TODO(bdarnell): Handle ErrProposalDropped better.
 		// https://github.com/cockroachdb/cockroach/issues/21849
-		for n := props.First(); n != nil; n = n.Next {
-			p := n.Value
-			if p.ctx != nil {
+		for iter := props.Iter(); iter.Valid(); iter.Move() {
+			if p := iter.Value(); p.ctx != nil {
 				log.Event(p.ctx, "entry dropped")
 			}
 		}

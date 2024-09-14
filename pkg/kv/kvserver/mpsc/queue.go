@@ -15,11 +15,6 @@ import (
 	"unsafe"
 )
 
-type Node[T any] struct {
-	Next  *Node[T]
-	Value T
-}
-
 // QueueRLocked is a subset of Queue available when the enclosing read lock is
 // locked.
 type QueueRLocked[T any] Queue[T]
@@ -108,29 +103,4 @@ func (q *QueueLocked[T]) Flush() List[T] {
 	ln := q.len
 	q.len = 0
 	return List[T]{first: first, len: ln}
-}
-
-type List[T any] struct {
-	first *Node[T]
-	len   uint64
-}
-
-func (l List[T]) First() *Node[T] { return l.first }
-
-func (l List[T]) Split(at *Node[T], ln uint64) (List[T], List[T]) {
-	next := at.Next
-	at.Next = nil
-	return List[T]{first: l.first, len: ln},
-		List[T]{first: next, len: l.len - ln}
-}
-
-func (l List[T]) Len() uint64 { return l.len }
-
-func (l List[T]) Unlink() []T {
-	values := make([]T, 0, l.Len())
-	for n := l.first; n != nil; {
-		values = append(values, n.Value)
-		n, n.Next = n.Next, nil
-	}
-	return values
 }

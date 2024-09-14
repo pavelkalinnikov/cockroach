@@ -838,14 +838,15 @@ func TestProposalBufferLinesUpEntriesAndProposals(t *testing.T) {
 	p := testProposer{
 		onProposalsDropped: func(ents []raftpb.Entry, props mpsc.List[*ProposalData], _ raft.StateType) {
 			require.Equal(t, uint64(len(ents)), props.Len())
-			for i, n := 0, props.First(); n != nil; i, n = i+1, n.Next {
-				p := n.Value
+			for i, iter := 0, props.Iter(); iter.Valid(); iter.Move() {
+				p := iter.Value()
 				if ents[i].Type == raftpb.EntryNormal {
 					require.Nil(t, p.command.ReplicatedEvalResult.ChangeReplicas)
 				} else {
 					require.NotNil(t, p.command.ReplicatedEvalResult.ChangeReplicas)
 				}
 				matchingDroppedProposalsSeen++
+				i++
 			}
 		},
 	}
