@@ -42,29 +42,29 @@ func makeProposalData() *ProposalData {
 		AdmissionOriginNode:   1,
 	}
 
-	p := &ProposalData{
-		ctx:                     context.WithValue(context.Background(), struct{}{}, "nonempty-ctx"),
-		sp:                      &tracing.Span{},
-		idKey:                   "deadbeef",
-		proposedAtTicks:         1,
-		createdAtTicks:          2,
-		command:                 raftCommand,
-		encodedCommand:          []byte("x"),
-		quotaAlloc:              &quotapool.IntAlloc{},
-		ec:                      endCmds{repl: &Replica{}},
-		applied:                 true,
-		doneCh:                  make(chan proposalResult),
-		Local:                   &result.LocalResult{},
-		Request:                 &kvpb.BatchRequest{},
-		leaseStatus:             kvserverpb.LeaseStatus{Lease: roachpb.Lease{Sequence: 1}},
-		tok:                     TrackedRequestToken{done: true},
-		raftAdmissionMeta:       &kvflowcontrolpb.RaftAdmissionMeta{},
-		v2SeenDuringApplication: true,
-		seedProposal:            nil,
-		lastReproposal:          nil,
-	}
-	p.self.Value = p
-	return p
+	return NewProposalData(func() ProposalData {
+		return ProposalData{
+			ctx:                     context.WithValue(context.Background(), struct{}{}, "nonempty-ctx"),
+			sp:                      &tracing.Span{},
+			idKey:                   "deadbeef",
+			proposedAtTicks:         1,
+			createdAtTicks:          2,
+			command:                 raftCommand,
+			encodedCommand:          []byte("x"),
+			quotaAlloc:              &quotapool.IntAlloc{},
+			ec:                      endCmds{repl: &Replica{}},
+			applied:                 true,
+			doneCh:                  make(chan proposalResult),
+			Local:                   &result.LocalResult{},
+			Request:                 &kvpb.BatchRequest{},
+			leaseStatus:             kvserverpb.LeaseStatus{Lease: roachpb.Lease{Sequence: 1}},
+			tok:                     TrackedRequestToken{done: true},
+			raftAdmissionMeta:       &kvflowcontrolpb.RaftAdmissionMeta{},
+			v2SeenDuringApplication: true,
+			seedProposal:            nil,
+			lastReproposal:          nil,
+		}
+	})
 }
 
 func TestProposalDataAndRaftCommandAreConsideredWhenAddingFields(t *testing.T) {

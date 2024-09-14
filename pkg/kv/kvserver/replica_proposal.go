@@ -109,7 +109,7 @@ import (
 type ProposalData struct {
 	// self is an intrusive queue/list node containing a pointer to this
 	// ProposalData.
-	self mpsc.Node[*ProposalData]
+	self *mpsc.Node[*ProposalData]
 
 	// The caller's context, used for logging proposals, reproposals, message
 	// sends, but not command application.
@@ -224,6 +224,19 @@ type ProposalData struct {
 	// such a way that the "common" parts of the (re-)proposals are shared and
 	// chaining isn't necessary.
 	lastReproposal *ProposalData
+}
+
+// NewProposalData creates a ProposalData with an intrusive mpsc.Node
+// initialized. Incurs at most one allocation.
+// The provided function initializes the data part of the ProposalData struct.
+func NewProposalData(init func() ProposalData) *ProposalData {
+	s := struct {
+		node mpsc.Node[*ProposalData]
+		data ProposalData
+	}{data: init()}
+	s.node.Value = &s.data
+	s.data.self = &s.node
+	return &s.data
 }
 
 // useReplicationAdmissionControl indicates whether this raft command should
@@ -1058,15 +1071,16 @@ func (r *Replica) requestToProposal(
 	ba, res, needConsensus, pErr := r.evaluateProposal(ctx, idKey, ba, g, st, ui)
 
 	// Fill out the results even if pErr != nil; we'll return the error below.
-	proposal := &ProposalData{
-		ctx:         ctx,
-		idKey:       idKey,
-		doneCh:      make(chan proposalResult, 1),
-		Local:       &res.Local,
-		Request:     ba,
-		leaseStatus: *st,
-	}
-	proposal.self.Value = proposal
+	proposal := NewProposalData(func() ProposalData {
+		return ProposalData{
+			ctx:         ctx,
+			idKey:       idKey,
+			doneCh:      make(chan proposalResult, 1),
+			Local:       &res.Local,
+			Request:     ba,
+			leaseStatus: *st,
+		}
+	})
 
 	if needConsensus {
 		proposal.command = &kvserverpb.RaftCommand{

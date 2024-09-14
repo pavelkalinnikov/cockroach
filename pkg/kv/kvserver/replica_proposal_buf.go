@@ -237,7 +237,7 @@ func (b *propBuf) Insert(ctx context.Context, p *ProposalData, tok TrackedReques
 	// Insert the proposal into the buffer's queue. The queue now takes ownership
 	// of the token.
 	p.tok = tok.Move(ctx)
-	if b.q.RLocked().Push(&p.self) {
+	if b.q.RLocked().Push(p.self) {
 		// If this is the first proposal in the buffer, schedule a Raft update check
 		// to inform Raft processing about the new proposal. Everyone else can rely
 		// on the request that added the first proposal to the buffer having already
@@ -260,7 +260,7 @@ func (b *propBuf) ReinsertLocked(_ context.Context, p *ProposalData) error {
 	if destroyed := b.p.destroyed(); !destroyed.IsAlive() {
 		return destroyed.err
 	}
-	if b.q.Locked().Push(&p.self) {
+	if b.q.Locked().Push(p.self) {
 		// If this is the first proposal in the buffer, schedule a Raft update check
 		// to inform Raft processing about the new proposal. Everyone else can rely
 		// on the request that added the first proposal to the buffer having already

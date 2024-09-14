@@ -27,7 +27,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvflowcontrol"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvflowcontrol/kvflowcontrolpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvflowcontrol/kvflowinspectpb"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/leases"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/raftlog"
@@ -306,20 +305,21 @@ func (pc proposalCreator) newProposal(ba *kvpb.BatchRequest) *ProposalData {
 			}
 		}
 	}
-	p := &ProposalData{
-		ctx:   context.Background(),
-		idKey: kvserverbase.CmdIDKey("test-cmd"),
-		command: &kvserverpb.RaftCommand{
-			ReplicatedEvalResult: kvserverpb.ReplicatedEvalResult{
-				IsLeaseRequest: isLeaseRequest,
-				State:          &kvserverpb.ReplicaState{Lease: lease},
-				ChangeReplicas: cr,
+	p := NewProposalData(func() ProposalData {
+		return ProposalData{
+			ctx:   context.Background(),
+			idKey: "test-cmd",
+			command: &kvserverpb.RaftCommand{
+				ReplicatedEvalResult: kvserverpb.ReplicatedEvalResult{
+					IsLeaseRequest: isLeaseRequest,
+					State:          &kvserverpb.ReplicaState{Lease: lease},
+					ChangeReplicas: cr,
+				},
 			},
-		},
-		Request:     ba,
-		leaseStatus: pc.lease,
-	}
-	p.self.Value = p
+			Request:     ba,
+			leaseStatus: pc.lease,
+		}
+	})
 	p.encodedCommand = pc.encodeProposal(p)
 	return p
 }

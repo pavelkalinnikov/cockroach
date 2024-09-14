@@ -327,49 +327,51 @@ func (r *Replica) makeReproposal(origP *ProposalData) (reproposal *ProposalData,
 	// here. Add a unit test that fails on addition of a new field and points at the
 	// need to double check what the intended behavior of the new field in this method
 	// is.
-	newProposal := &ProposalData{
-		// The proposal's context and span carry over. Recall that they are *not*
-		// used for command application; `cmd.{ctx,sp}` are; and since this last
-		// span "follows from" the proposal's span, if the proposal sticks around
-		// for (some reincarnation of) the command to eventually apply, its trace
-		// will reflect the reproposal as well.
-		ctx:             origP.ctx,
-		idKey:           raftlog.MakeCmdIDKey(),
-		proposedAtTicks: 0, // set in registerProposalLocked
-		createdAtTicks:  0, // set in registerProposalLocked
-		command:         &newCommand,
+	newProposal := NewProposalData(func() ProposalData {
+		return ProposalData{
+			// The proposal's context and span carry over. Recall that they are *not*
+			// used for command application; `cmd.{ctx,sp}` are; and since this last
+			// span "follows from" the proposal's span, if the proposal sticks around
+			// for (some reincarnation of) the command to eventually apply, its trace
+			// will reflect the reproposal as well.
+			ctx:             origP.ctx,
+			idKey:           raftlog.MakeCmdIDKey(),
+			proposedAtTicks: 0, // set in registerProposalLocked
+			createdAtTicks:  0, // set in registerProposalLocked
+			command:         &newCommand,
 
-		// Next comes the block of fields that are "moved" to the new proposal. See
-		// the deferred function call below which, correspondingly, clears these
-		// fields in the original proposal.
-		sp: origP.sp,
-		// NB: quotaAlloc is always nil here, because we already released the quota
-		// unconditionally in retrieveLocalProposals. So the below is a no-op.
-		//
-		// TODO(tbg): if we shifted the release of proposal quota to *after*
-		// successful application, we could move the quota over prematurely
-		// releasing it here.
-		quotaAlloc: origP.quotaAlloc,
-		ec:         origP.ec,
-		doneCh:     origP.doneCh,
+			// Next comes the block of fields that are "moved" to the new proposal.
+			// See the deferred function call below which, correspondingly, clears
+			// these fields in the original proposal.
+			sp: origP.sp,
+			// NB: quotaAlloc is always nil here, because we already released the
+			// quota unconditionally in retrieveLocalProposals. So the below is a
+			// no-op.
+			//
+			// TODO(tbg): if we shifted the release of proposal quota to *after*
+			// successful application, we could move the quota over prematurely
+			// releasing it here.
+			quotaAlloc: origP.quotaAlloc,
+			ec:         origP.ec,
+			doneCh:     origP.doneCh,
 
-		applied: false,
+			applied: false,
 
-		// Local is copied over. It won't be used on the old proposal (since that
-		// proposal got rejected), but since it's still "local" we don't want to put
-		// it into  an undefined state by removing its response. The same goes for
-		// Request.
-		Local:                   origP.Local,
-		Request:                 origP.Request,
-		leaseStatus:             origP.leaseStatus,
-		tok:                     TrackedRequestToken{}, // filled in in `propose`
-		encodedCommand:          nil,
-		raftAdmissionMeta:       nil,
-		v2SeenDuringApplication: false,
+			// Local is copied over. It won't be used on the old proposal (since that
+			// proposal got rejected), but since it's still "local" we don't want to
+			// put it into  an undefined state by removing its response. The same goes
+			// for Request.
+			Local:                   origP.Local,
+			Request:                 origP.Request,
+			leaseStatus:             origP.leaseStatus,
+			tok:                     TrackedRequestToken{}, // filled in in `propose`
+			encodedCommand:          nil,
+			raftAdmissionMeta:       nil,
+			v2SeenDuringApplication: false,
 
-		seedProposal: seedP,
-	}
-	newProposal.self.Value = newProposal
+			seedProposal: seedP,
+		}
+	})
 
 	return newProposal, func() {
 		// If the original proposal had an explicit span, it's an async consensus
