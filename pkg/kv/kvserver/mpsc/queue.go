@@ -58,8 +58,8 @@ func (q *QueueLocked[T]) Len() uint64 {
 //
 // The enclosing lock must be locked for reads.
 func (q *QueueRLocked[T]) Push(n *Node[T]) bool {
-	atomic.AddUint64(&q.len, 1)
-	n.Next = nil
+	// atomic.AddUint64(&q.len, 1)
+	// n.Next = nil
 	was := (*Node[T])(atomic.SwapPointer(&q.tail, unsafe.Pointer(n)))
 	was.Next = n
 	return was == &q.head
