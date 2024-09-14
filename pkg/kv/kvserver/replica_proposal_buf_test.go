@@ -319,6 +319,7 @@ func (pc proposalCreator) newProposal(ba *kvpb.BatchRequest) *ProposalData {
 		Request:     ba,
 		leaseStatus: pc.lease,
 	}
+	p.self.Value = p
 	p.encodedCommand = pc.encodeProposal(p)
 	return p
 }
@@ -346,8 +347,8 @@ func TestProposalBuffer(t *testing.T) {
 	clock := hlc.NewClockForTesting(nil)
 	b.Init(&p, tracker.NewLockfreeTracker(), clock, cluster.MakeTestingClusterSettings())
 
-	// Insert propBufArrayMinSize proposals. The buffer should not be flushed.
-	num := propBufArrayMinSize
+	// Insert 4 proposals. The buffer should not be flushed.
+	const num = 4
 	leaseReqIdx := 3
 	for i := 0; i < num; i++ {
 		leaseReq := i == leaseReqIdx
@@ -359,28 +360,29 @@ func TestProposalBuffer(t *testing.T) {
 		}
 		_, tok := b.TrackEvaluatingRequest(ctx, hlc.MinTimestamp)
 		require.NoError(t, b.Insert(ctx, pd, tok))
-		require.Equal(t, i+1, b.AllocatedIdx())
+		require.Equal(t, uint64(i+1), b.q.RLocked().Len())
 		require.Equal(t, 1, p.enqueued)
 		require.Equal(t, 0, p.registered)
 	}
 	require.Equal(t, num, b.evalTracker.Count())
 	require.Empty(t, r.consumeProposals())
 
-	// Insert another proposal. This causes the buffer to flush.
+	// Flush the buffer.
+	require.NoError(t, b.flushLocked(ctx))
+	// Insert another proposal.
 	pd := pc.newPutProposal(hlc.Timestamp{})
 	_, tok := b.TrackEvaluatingRequest(ctx, hlc.MinTimestamp)
 	err := b.Insert(ctx, pd, tok)
 	require.Nil(t, err)
-	require.Equal(t, 1, b.AllocatedIdx())
+	require.Equal(t, uint64(1), b.q.RLocked().Len())
 	require.Equal(t, 2, p.enqueued)
 	require.Equal(t, num, p.registered)
 	// We've flushed num requests, out of which one is a lease request (so that
 	// one did not increment the MLAI).
 	require.Equal(t, kvpb.LeaseAppliedIndex(num-1), b.assignedLAI)
-	require.Equal(t, 2*propBufArrayMinSize, b.arr.len())
 	require.Equal(t, 1, b.evalTracker.Count())
 	proposals := r.consumeProposals()
-	require.Len(t, proposals, propBufArrayMinSize)
+	require.Len(t, proposals, num)
 	var lai kvpb.LeaseAppliedIndex
 	for i, p := range proposals {
 		if i != leaseReqIdx {
@@ -391,12 +393,8 @@ func TestProposalBuffer(t *testing.T) {
 		}
 	}
 
-	// Flush the buffer repeatedly until its array shrinks.
-	for i := 0; i < propBufArrayShrinkDelay; i++ {
-		require.Equal(t, 2*propBufArrayMinSize, b.arr.len())
-		require.Nil(t, b.flushLocked(ctx))
-	}
-	require.Equal(t, propBufArrayMinSize, b.arr.len())
+	// Flush the buffer again.
+	require.NoError(t, b.flushLocked(ctx))
 }
 
 // TestProposalBufferConcurrentWithDestroy tests the concurrency properties of
@@ -483,7 +481,7 @@ func TestProposalBufferRegistersAllOnProposalError(t *testing.T) {
 	clock := hlc.NewClockForTesting(nil)
 	b.Init(&p, tracker.NewLockfreeTracker(), clock, cluster.MakeTestingClusterSettings())
 
-	num := propBufArrayMinSize
+	const num = 4
 	toks := make([]TrackedRequestToken, num)
 	for i := 0; i < num; i++ {
 		pd := pc.newPutProposal(hlc.Timestamp{})
@@ -491,7 +489,7 @@ func TestProposalBufferRegistersAllOnProposalError(t *testing.T) {
 		err := b.Insert(ctx, pd, toks[i])
 		require.Nil(t, err)
 	}
-	require.Equal(t, num, b.AllocatedIdx())
+	require.Equal(t, uint64(num), b.q.RLocked().Len())
 
 	propNum := 0
 	propErr := errors.New("failed proposal")
@@ -861,9 +859,6 @@ func TestProposalBufferLinesUpEntriesAndProposals(t *testing.T) {
 	p.fi = proposerFirstIndex
 
 	var b propBuf
-	// Make the proposal buffer large so that all the proposals we're putting in
-	// get flushed together. (At the time of writing, default size is 4).
-	b.arr.adjustSize(100)
 	clock := hlc.NewClockForTesting(nil)
 	tr := tracker.NewLockfreeTracker()
 	b.Init(&p, tr, clock, cluster.MakeTestingClusterSettings())

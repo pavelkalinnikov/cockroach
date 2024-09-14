@@ -527,7 +527,7 @@ func checkReplicationChangeAllowed(
 }
 
 func (r *Replica) numPendingProposalsRLocked() int64 {
-	return int64(len(r.mu.proposals) + r.mu.proposalBuf.AllocatedIdx())
+	return int64(len(r.mu.proposals)) + int64(r.mu.proposalBuf.q.RLocked().Len())
 }
 
 // hasPendingProposalsRLocked is part of the quiescer interface.

@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
@@ -25,6 +24,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/leases"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/liveness/livenesspb"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/mpsc"
 	"github.com/cockroachdb/cockroach/pkg/raft"
 	"github.com/cockroachdb/cockroach/pkg/raft/raftpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
@@ -64,20 +64,15 @@ import (
 // initialization. Methods called "...Locked" and "...RLocked" expect the
 // corresponding locker() and rlocker() to be held.
 type propBuf struct {
-	p        proposer
+	p proposer
+	q *mpsc.Queue[*ProposalData]
+
 	clock    *hlc.Clock
 	settings *cluster.Settings
 	// evalTracker tracks currently-evaluating requests, making sure that
 	// proposals coming out of the propBuf don't carry closed timestamps below
 	// currently-evaluating requests.
 	evalTracker tracker.Tracker
-	full        sync.Cond
-
-	// arr contains the buffered proposals.
-	arr propBufArray
-	// allocatedIdx is the next index into propBufArray to allocate. Accessed
-	// atomically.
-	allocatedIdx int64
 
 	// assignedLAI represents the highest LAI that was assigned to a proposal.
 	// This is set at the same time as assignedClosedTimestamp.
@@ -180,7 +175,7 @@ func (b *propBuf) Init(
 	p proposer, tracker tracker.Tracker, clock *hlc.Clock, settings *cluster.Settings,
 ) {
 	b.p = p
-	b.full.L = p.rlocker()
+	b.q = mpsc.NewQueue[*ProposalData]()
 	b.clock = clock
 	b.evalTracker = tracker
 	b.settings = settings
@@ -195,25 +190,6 @@ func (b *propBuf) Init(
 	if b.testing.leaseIndexFilter != nil {
 		b.forwardAssignedLAILocked(1)
 	}
-}
-
-// AllocatedIdx returns the highest index that was allocated. This generally
-// corresponds to the size of the buffer but, if the buffer is full, the
-// allocated index can temporarily be in advance of the size.
-func (b *propBuf) AllocatedIdx() int {
-	return int(atomic.LoadInt64(&b.allocatedIdx))
-}
-
-// clearAllocatedIdx resets the allocated index, emptying the buffer. Returns
-// the number of elements that were in the buffer.
-func (b *propBuf) clearAllocatedIdx() int {
-	return int(atomic.SwapInt64(&b.allocatedIdx, 0))
-}
-
-// incAllocatedIdx allocates a slot into the the buffer that a new proposal can
-// be written to. Returns the index of the slot.
-func (b *propBuf) incAllocatedIdx() int {
-	return int(atomic.AddInt64(&b.allocatedIdx, 1)) - 1 // -1 since the index is 0-based
 }
 
 // Insert inserts a new command into the proposal buffer to be proposed to the
@@ -234,8 +210,8 @@ func (b *propBuf) Insert(ctx context.Context, p *ProposalData, tok TrackedReques
 
 	// Hold the read lock while inserting into the proposal buffer. Other
 	// insertion attempts will also grab the read lock, so they can insert
-	// concurrently. Consumers of the proposal buffer will grab the write lock,
-	// so they must wait for concurrent insertion attempts to finish.
+	// concurrently. Consumers of the proposal buffer will grab the write lock, so
+	// they must wait for concurrent insertion attempts to finish.
 	b.p.rlocker().Lock()
 	defer b.p.rlocker().Unlock()
 
@@ -252,120 +228,46 @@ func (b *propBuf) Insert(ctx context.Context, p *ProposalData, tok TrackedReques
 		}
 	}
 
-	// Update the proposal buffer counter and determine which index we should
-	// insert at.
-	idx, err := b.allocateIndex(ctx, false /* wLocked */)
-	if err != nil {
-		return err
+	if destroyed := b.p.destroyed(); !destroyed.IsAlive() {
+		return destroyed.err
 	}
-
 	if log.V(4) {
 		log.Infof(p.ctx, "submitting proposal %x", p.idKey)
 	}
-
-	// Insert the proposal into the buffer's array. The buffer now takes ownership
+	// Insert the proposal into the buffer's queue. The queue now takes ownership
 	// of the token.
 	p.tok = tok.Move(ctx)
-	b.insertIntoArray(p, idx)
+	if b.q.RLocked().Push(&p.self) {
+		// If this is the first proposal in the buffer, schedule a Raft update check
+		// to inform Raft processing about the new proposal. Everyone else can rely
+		// on the request that added the first proposal to the buffer having already
+		// scheduled a Raft update check.
+		b.p.enqueueUpdateCheck()
+	}
 	return nil
 }
 
 // ReinsertLocked inserts a command that has already passed through the proposal
 // buffer back into the buffer to be reproposed at a new Raft log index. Unlike
 // Insert, it does not modify the command.
-func (b *propBuf) ReinsertLocked(ctx context.Context, p *ProposalData) error {
+func (b *propBuf) ReinsertLocked(_ context.Context, p *ProposalData) error {
 	// NB: we can see proposals here that have already been applied
 	// (v2SeenDuringApplication==true). We want those to not be flushed again.
 	// However, we can also see a proposal here that is not applied yet while
 	// inserting but is applied by the time we flush. So we don't drop the
 	// proposal here, but instead in FlushLockedWithRaftGroup, to unify the two
 	// cases.
-
-	// Update the proposal buffer counter and determine which index we should
-	// insert at.
-	idx, err := b.allocateIndex(ctx, true /* wLocked */)
-	if err != nil {
-		return err
+	if destroyed := b.p.destroyed(); !destroyed.IsAlive() {
+		return destroyed.err
 	}
-
-	// Insert the proposal into the buffer's array.
-	b.insertIntoArray(p, idx)
-	return nil
-}
-
-// allocateIndex allocates a buffer index to be used for storing a proposal. The
-// method will repeat the atomic update operation until it is able to
-// successfully reserve an index in the array. If an attempt finds that the
-// array is full then it may flush the array before trying again.
-//
-// The method expects that either the proposer's read lock or write lock is
-// held. It does not mandate which, but expects the caller to specify using
-// the wLocked argument.
-func (b *propBuf) allocateIndex(ctx context.Context, wLocked bool) (int, error) {
-	// Repeatedly attempt to find an open index in the buffer's array.
-	for {
-		// NB: We need to check whether the proposer is destroyed before each
-		// iteration in case the proposer has been destroyed between the initial
-		// check and the current acquisition of the read lock. Failure to do so
-		// will leave pending proposals that never get cleared.
-		if status := b.p.destroyed(); !status.IsAlive() {
-			return 0, status.err
-		}
-
-		idx := b.incAllocatedIdx()
-		if idx < b.arr.len() {
-			// The buffer is not full. Our slot in the array is reserved.
-			return idx, nil
-		} else if wLocked {
-			// The buffer is full and we're holding the exclusive lock. Flush
-			// the buffer before trying again.
-			if err := b.flushLocked(ctx); err != nil {
-				return 0, err
-			}
-		} else if idx == b.arr.len() {
-			// The buffer is full and we were the first request to notice out of
-			// potentially many requests holding the shared lock and trying to
-			// insert concurrently. Eagerly attempt to flush the buffer before
-			// trying again.
-			if err := b.flushRLocked(ctx); err != nil {
-				return 0, err
-			}
-		} else {
-			// The buffer is full and we were not the first request to notice
-			// out of potentially many requests holding the shared lock and
-			// trying to insert concurrently. Wait for the buffer to be flushed
-			// by someone else before trying again.
-			b.full.Wait()
-		}
-	}
-}
-
-// insertIntoArray inserts the proposal into the proposal buffer's array at the
-// specified index. It also schedules a Raft update check if necessary.
-func (b *propBuf) insertIntoArray(p *ProposalData, idx int) {
-	b.arr.asSlice()[idx] = p
-	if idx == 0 {
-		// If this is the first proposal in the buffer, schedule a Raft update
-		// check to inform Raft processing about the new proposal. Everyone else
-		// can rely on the request that added the first proposal to the buffer
-		// having already scheduled a Raft update check.
+	if b.q.Locked().Push(&p.self) {
+		// If this is the first proposal in the buffer, schedule a Raft update check
+		// to inform Raft processing about the new proposal. Everyone else can rely
+		// on the request that added the first proposal to the buffer having already
+		// scheduled a Raft update check.
 		b.p.enqueueUpdateCheck()
 	}
-}
-
-func (b *propBuf) flushRLocked(ctx context.Context) error {
-	// Upgrade the shared lock to an exclusive lock. After doing so, check again
-	// whether the proposer has been destroyed. If so, wake up other goroutines
-	// waiting for the flush.
-	b.p.rlocker().Unlock()
-	defer b.p.rlocker().Lock()
-	b.p.locker().Lock()
-	defer b.p.locker().Unlock()
-	if status := b.p.destroyed(); !status.IsAlive() {
-		b.full.Broadcast()
-		return status.err
-	}
-	return b.flushLocked(ctx)
+	return nil
 }
 
 func (b *propBuf) flushLocked(ctx context.Context) error {
@@ -395,19 +297,12 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 	// We hold the write lock while reading from and flushing the proposal
 	// buffer. This ensures that we synchronize with all producers and other
 	// consumers.
-	used := b.clearAllocatedIdx()
-	// Before returning, consider resizing the proposal buffer's array,
-	// depending on how much of it was used before the current flush.
-	defer b.arr.adjustSize(used)
-	if used == 0 {
-		// The buffer is empty. Nothing to do.
-		return 0, nil
-	} else if used > b.arr.len() {
-		// The buffer is full and at least one writer has tried to allocate
-		// on top of the full buffer, so notify them to try again.
-		used = b.arr.len()
-		defer b.full.Broadcast()
-	}
+	list := b.q.Locked().Flush()
+	// TODO(pav-kv): avoid this allocation. We can iterate the list below.
+	// However, there are a few more allocations below already, for slices
+	// parallel to the list of proposals. It might be not worth optimizing just
+	// one allocation, better find a way to remove all of them.
+	buf := list.Unlink()
 
 	// Iterate through the proposals in the buffer and propose them to Raft.
 	// While doing so, build up batches of entries and submit them to Raft all
@@ -415,20 +310,13 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 	// Step can dramatically reduce the number of messages required to commit
 	// and apply them.
 
-	ents := make([]raftpb.Entry, 0, used)
+	ents := make([]raftpb.Entry, 0, len(buf))
 	// Use this slice to track, for each entry that's proposed to raft, whether
 	// it's subject to replication admission control. Updated in tandem with
 	// slice above.
-	admitHandles := make([]admitEntHandle, 0, used)
+	admitHandles := make([]admitEntHandle, 0, len(buf))
 	// INVARIANT: buf[firstProp:nextProp] lines up with the ents slice.
 	firstProp, nextProp := 0, 0
-	buf := b.arr.asSlice()[:used]
-	defer func() {
-		// Clear buffer.
-		for i := range buf {
-			buf[i] = nil
-		}
-	}()
 
 	// Compute the closed timestamp target, which will be used to assign a closed
 	// timestamp to all proposals in this batch.
@@ -596,7 +484,7 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 	}
 
 	propErr := proposeBatch(ctx, b.p, raftGroup, ents, admitHandles, buf[firstProp:nextProp])
-	return used, propErr
+	return len(buf), propErr
 }
 
 var logCampaignOnRejectLease = log.Every(10 * time.Second)
@@ -1082,70 +970,6 @@ func (b *propBuf) MaybeForwardClosedLocked(ctx context.Context, target hlc.Times
 		return false
 	}
 	return b.forwardClosedTimestampLocked(target)
-}
-
-const propBufArrayMinSize = 8
-const propBufArrayMaxSize = 1 << 25
-const propBufArrayShrinkDelay = 16
-
-// propBufArray is a dynamically-sized array of ProposalData pointers. The
-// array grows when it repeatedly fills up between flushes and shrinks when
-// it repeatedly stays below a certainly level of utilization. Sufficiently
-// small arrays avoid indirection and are stored inline.
-type propBufArray struct {
-	small  [propBufArrayMinSize]*ProposalData
-	large  []*ProposalData
-	shrink int
-}
-
-func (a *propBufArray) asSlice() []*ProposalData {
-	if a.large != nil {
-		return a.large
-	}
-	return a.small[:]
-}
-
-func (a *propBufArray) len() int {
-	return len(a.asSlice())
-}
-
-// adjustSize adjusts the proposal buffer array's size based on how much of the
-// array was used before the last flush and whether the size was observed to be
-// too small, too large, or just right. The size grows quickly and shrinks
-// slowly to prevent thrashing and oscillation.
-func (a *propBufArray) adjustSize(used int) {
-	cur := a.len()
-	switch {
-	case used <= cur/4:
-		// The array is too large. Shrink it if possible.
-		if cur <= propBufArrayMinSize {
-			return
-		}
-		a.shrink++
-		// Require propBufArrayShrinkDelay straight periods of underutilization
-		// before shrinking. An array that is too big is better than an array
-		// that is too small, and we don't want oscillation.
-		if a.shrink == propBufArrayShrinkDelay {
-			a.shrink = 0
-			next := cur / 2
-			if next <= propBufArrayMinSize {
-				a.large = nil
-			} else {
-				a.large = make([]*ProposalData, next)
-			}
-		}
-	case used >= cur:
-		// The array is too small. Grow it if possible.
-		a.shrink = 0
-		next := cur << 10
-		if next <= propBufArrayMaxSize {
-			a.large = make([]*ProposalData, next)
-			fmt.Println("grew to", cap(a.large))
-		}
-	default:
-		// The array is a good size. Do nothing.
-		a.shrink = 0
-	}
 }
 
 // replicaProposer implements the proposer interface.

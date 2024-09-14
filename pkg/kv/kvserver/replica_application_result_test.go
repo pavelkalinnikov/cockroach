@@ -42,7 +42,7 @@ func makeProposalData() *ProposalData {
 		AdmissionOriginNode:   1,
 	}
 
-	return &ProposalData{
+	p := &ProposalData{
 		ctx:                     context.WithValue(context.Background(), struct{}{}, "nonempty-ctx"),
 		sp:                      &tracing.Span{},
 		idKey:                   "deadbeef",
@@ -63,6 +63,8 @@ func makeProposalData() *ProposalData {
 		seedProposal:            nil,
 		lastReproposal:          nil,
 	}
+	p.self.Value = p
+	return p
 }
 
 func TestProposalDataAndRaftCommandAreConsideredWhenAddingFields(t *testing.T) {
@@ -79,7 +81,7 @@ func TestProposalDataAndRaftCommandAreConsideredWhenAddingFields(t *testing.T) {
 	// here, and second, we don't want to check for recursively populated structs (but
 	// only for the top level fields).
 	require.Equal(t, 10, reflect.TypeOf(*prop.command).NumField())
-	require.Equal(t, 19, reflect.TypeOf(*prop).NumField())
+	require.Equal(t, 20, reflect.TypeOf(*prop).NumField())
 }
 
 func TestReplicaMakeReproposalChaininig(t *testing.T) {

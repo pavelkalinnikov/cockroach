@@ -24,6 +24,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvflowcontrol/kvflowcontrolpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/mpsc"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/readsummary/rspb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/uncertainty"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
@@ -106,6 +107,10 @@ import (
 // buffer (guarded by r.mu) and then is flushed into the proposals map, from
 // which it is consumed during log application (which holds raftMu).
 type ProposalData struct {
+	// self is an intrusive queue/list node containing a pointer to this
+	// ProposalData.
+	self mpsc.Node[*ProposalData]
+
 	// The caller's context, used for logging proposals, reproposals, message
 	// sends, but not command application.
 	//
@@ -1061,6 +1066,7 @@ func (r *Replica) requestToProposal(
 		Request:     ba,
 		leaseStatus: *st,
 	}
+	proposal.self.Value = proposal
 
 	if needConsensus {
 		proposal.command = &kvserverpb.RaftCommand{

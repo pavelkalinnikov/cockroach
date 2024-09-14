@@ -369,6 +369,7 @@ func (r *Replica) makeReproposal(origP *ProposalData) (reproposal *ProposalData,
 
 		seedProposal: seedP,
 	}
+	newProposal.self.Value = newProposal
 
 	return newProposal, func() {
 		// If the original proposal had an explicit span, it's an async consensus
