@@ -485,7 +485,7 @@ func newRaft(c *Config) *raft {
 		ProgressMap:      tracker.MakeEmptyProgressMap(),
 		MaxInflight:      r.maxInflight,
 		MaxInflightBytes: r.maxInflightBytes,
-		LastIndex:        lastID.index,
+		LastIndex:        lastID.Index,
 	}, cs)
 	if err != nil {
 		panic(err)
@@ -507,7 +507,7 @@ func newRaft(c *Config) *raft {
 
 	// TODO(pav-kv): it should be ok to simply print %+v for lastID.
 	r.logger.Infof("newRaft %x [peers: [%s], term: %d, commit: %d, applied: %d, lastindex: %d, lastterm: %d]",
-		r.id, strings.Join(nodesStrs, ","), r.Term, r.raftLog.committed, r.raftLog.applied, lastID.index, lastID.term)
+		r.id, strings.Join(nodesStrs, ","), r.Term, r.raftLog.committed, r.raftLog.applied, lastID.Index, lastID.Term)
 	return r
 }
 
@@ -645,8 +645,8 @@ func (r *raft) prepareMsgApp(to pb.PeerID, pr *tracker.Progress, ls logSlice) pb
 		To:      to,
 		Type:    pb.MsgApp,
 		Term:    ls.term,
-		Index:   ls.prev.index,
-		LogTerm: ls.prev.term,
+		Index:   ls.prev.Index,
+		LogTerm: ls.prev.Term,
 		Entries: ls.entries,
 		Commit:  commit,
 		Match:   pr.Match,
@@ -663,7 +663,7 @@ func (r *raft) maybePrepareMsgApp(to pb.PeerID, ls logSlice) (pb.Message, bool) 
 		return pb.Message{}, false
 	}
 	pr := r.trk.Progress(to)
-	if pr == nil || pr.State != tracker.StateReplicate || pr.Next != ls.prev.index+1 {
+	if pr == nil || pr.State != tracker.StateReplicate || pr.Next != ls.prev.Index+1 {
 		return pb.Message{}, false
 	}
 	return r.prepareMsgApp(to, pr, ls), true
@@ -709,7 +709,7 @@ func (r *raft) maybeSendAppend(to pb.PeerID) bool {
 
 	r.send(r.prepareMsgApp(to, pr, logSlice{
 		term:    r.Term,
-		prev:    entryID{index: prevIndex, term: prevTerm},
+		prev:    EntryID{Index: prevIndex, Term: prevTerm},
 		entries: entries,
 	}))
 	return true
@@ -733,7 +733,7 @@ func (r *raft) sendPing(to pb.PeerID) bool {
 	// NB: this sets MsgAppProbesPaused to true again.
 	r.send(r.prepareMsgApp(to, pr, logSlice{
 		term: r.Term,
-		prev: entryID{index: prevIndex, term: prevTerm},
+		prev: EntryID{Index: prevIndex, Term: prevTerm},
 	}))
 	return true
 }
@@ -979,7 +979,7 @@ func (r *raft) maybeCommit() bool {
 	// replicas; once an entry from the current term has been committed in this
 	// way, then all prior entries are committed indirectly because of the Log
 	// Matching Property.
-	if !r.raftLog.matchTerm(entryID{term: r.Term, index: index}) {
+	if !r.raftLog.matchTerm(EntryID{Term: r.Term, Index: index}) {
 		return false
 	}
 	r.raftLog.commitTo(LogMark{Term: r.Term, Index: index})
@@ -1040,7 +1040,7 @@ func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
 	last := r.raftLog.lastEntryID()
 	for i := range es {
 		es[i].Term = r.Term
-		es[i].Index = last.index + 1 + uint64(i)
+		es[i].Index = last.Index + 1 + uint64(i)
 	}
 	// Track the size of this uncommitted proposal.
 	if !r.increaseUncommittedSize(es) {
@@ -1363,13 +1363,13 @@ func (r *raft) campaign(t CampaignType) {
 		// TODO(pav-kv): it should be ok to simply print %+v for the lastEntryID.
 		last := r.raftLog.lastEntryID()
 		r.logger.Infof("%x [logterm: %d, index: %d] sent %s request to %x at term %d",
-			r.id, last.term, last.index, voteMsg, id, r.Term)
+			r.id, last.Term, last.Index, voteMsg, id, r.Term)
 
 		var ctx []byte
 		if t == campaignTransfer {
 			ctx = []byte(t)
 		}
-		r.send(pb.Message{To: id, Term: term, Type: voteMsg, Index: last.index, LogTerm: last.term, Context: ctx})
+		r.send(pb.Message{To: id, Term: term, Type: voteMsg, Index: last.Index, LogTerm: last.Term, Context: ctx})
 	}
 }
 
@@ -1424,7 +1424,7 @@ func (r *raft) Step(m pb.Message) error {
 					// TODO(pav-kv): it should be ok to simply print the %+v of the
 					// lastEntryID.
 					r.logger.Infof("%x [logterm: %d, index: %d, vote: %x] ignored %s from %x [logterm: %d, index: %d] at term %d: %s%s%s",
-						r.id, last.term, last.index, r.Vote, m.Type, m.From, m.LogTerm, m.Index, r.Term, inHeartbeatLeaseMsg, sep, inFortifyLeaseMsg)
+						r.id, last.Term, last.Index, r.Vote, m.Type, m.From, m.LogTerm, m.Index, r.Term, inHeartbeatLeaseMsg, sep, inFortifyLeaseMsg)
 				}
 				return nil // don't update term/grant vote; early return
 			}
@@ -1489,7 +1489,7 @@ func (r *raft) Step(m pb.Message) error {
 			last := r.raftLog.lastEntryID()
 			// TODO(pav-kv): it should be ok to simply print %+v of the lastEntryID.
 			r.logger.Infof("%x [logterm: %d, index: %d, vote: %x] rejected %s from %x [logterm: %d, index: %d] at term %d",
-				r.id, last.term, last.index, r.Vote, m.Type, m.From, m.LogTerm, m.Index, r.Term)
+				r.id, last.Term, last.Index, r.Vote, m.Type, m.From, m.LogTerm, m.Index, r.Term)
 			r.send(pb.Message{To: m.From, Term: r.Term, Type: pb.MsgPreVoteResp, Reject: true})
 		} else {
 			// ignore other cases
@@ -1533,7 +1533,7 @@ func (r *raft) Step(m pb.Message) error {
 			(m.Type == pb.MsgPreVote && m.Term > r.Term)
 		// ...and we believe the candidate is up to date.
 		lastID := r.raftLog.lastEntryID()
-		candLastID := entryID{term: m.LogTerm, index: m.Index}
+		candLastID := EntryID{Term: m.LogTerm, Index: m.Index}
 		if canVote && r.raftLog.isUpToDate(candLastID) {
 			// Note: it turns out that that learners must be allowed to cast votes.
 			// This seems counter- intuitive but is necessary in the situation in which
@@ -1554,7 +1554,7 @@ func (r *raft) Step(m pb.Message) error {
 			// in:
 			// https://github.com/etcd-io/etcd/issues/7625#issuecomment-488798263.
 			r.logger.Infof("%x [logterm: %d, index: %d, vote: %x] cast %s for %x [logterm: %d, index: %d] at term %d",
-				r.id, lastID.term, lastID.index, r.Vote, m.Type, m.From, candLastID.term, candLastID.index, r.Term)
+				r.id, lastID.Term, lastID.Index, r.Vote, m.Type, m.From, candLastID.Term, candLastID.Index, r.Term)
 			// When responding to Msg{Pre,}Vote messages we include the term
 			// from the message, not the local term. To see why, consider the
 			// case where a single node was previously partitioned away and
@@ -1572,7 +1572,7 @@ func (r *raft) Step(m pb.Message) error {
 			}
 		} else {
 			r.logger.Infof("%x [logterm: %d, index: %d, vote: %x] rejected %s from %x [logterm: %d, index: %d] at term %d",
-				r.id, lastID.term, lastID.index, r.Vote, m.Type, m.From, candLastID.term, candLastID.index, r.Term)
+				r.id, lastID.Term, lastID.Index, r.Vote, m.Type, m.From, candLastID.Term, candLastID.Index, r.Term)
 			r.send(pb.Message{To: m.From, Term: r.Term, Type: voteRespMsgType(m.Type), Reject: true})
 		}
 
@@ -2110,7 +2110,7 @@ func logSliceFromMsgApp(m *pb.Message) logSlice {
 	// TODO(pav-kv): consider also validating the logSlice here.
 	return logSlice{
 		term:    m.Term,
-		prev:    entryID{term: m.LogTerm, index: m.Index},
+		prev:    EntryID{Term: m.LogTerm, Index: m.Index},
 		entries: m.Entries,
 	}
 }
@@ -2128,7 +2128,7 @@ func (r *raft) handleAppendEntries(m pb.Message) {
 		return
 	}
 
-	if a.prev.index < r.raftLog.committed {
+	if a.prev.Index < r.raftLog.committed {
 		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: r.raftLog.committed,
 			Commit: r.raftLog.committed})
 		return
@@ -2241,12 +2241,12 @@ func (r *raft) handleSnapshot(m pb.Message) {
 	id := s.lastEntryID()
 	if r.restore(s) {
 		r.logger.Infof("%x [commit: %d] restored snapshot [index: %d, term: %d]",
-			r.id, r.raftLog.committed, id.index, id.term)
+			r.id, r.raftLog.committed, id.Index, id.Term)
 		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: r.raftLog.lastIndex(),
 			Commit: r.raftLog.committed})
 	} else {
 		r.logger.Infof("%x [commit: %d] ignored snapshot [index: %d, term: %d]",
-			r.id, r.raftLog.committed, id.index, id.term)
+			r.id, r.raftLog.committed, id.Index, id.Term)
 		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: r.raftLog.committed,
 			Commit: r.raftLog.committed})
 	}
@@ -2320,7 +2320,7 @@ func (r *raft) deFortify(from pb.PeerID, term uint64) {
 // ignored, either because it was obsolete or because of an error.
 func (r *raft) restore(s snapshot) bool {
 	id := s.lastEntryID()
-	if id.index <= r.raftLog.committed {
+	if id.Index <= r.raftLog.committed {
 		return false
 	}
 	if r.state != StateFollower {
@@ -2371,13 +2371,13 @@ func (r *raft) restore(s snapshot) bool {
 		// TODO(pav-kv): can print %+v of the id, but it will change the format.
 		last := r.raftLog.lastEntryID()
 		r.logger.Infof("%x [commit: %d, lastindex: %d, lastterm: %d] fast-forwarded commit to snapshot [index: %d, term: %d]",
-			r.id, r.raftLog.committed, last.index, last.term, id.index, id.term)
+			r.id, r.raftLog.committed, last.Index, last.Term, id.Index, id.Term)
 		r.raftLog.commitTo(s.mark())
 		return false
 	}
 
 	if !r.raftLog.restore(s) {
-		r.logger.Errorf("%x unable to restore snapshot [index: %d, term: %d]", r.id, id.index, id.term)
+		r.logger.Errorf("%x unable to restore snapshot [index: %d, term: %d]", r.id, id.Index, id.Term)
 		return false
 	}
 
@@ -2400,7 +2400,7 @@ func (r *raft) restore(s snapshot) bool {
 
 	last := r.raftLog.lastEntryID()
 	r.logger.Infof("%x [commit: %d, lastindex: %d, lastterm: %d] restored snapshot [index: %d, term: %d]",
-		r.id, r.raftLog.committed, last.index, last.term, id.index, id.term)
+		r.id, r.raftLog.committed, last.Index, last.Term, id.Index, id.Term)
 	return true
 }
 

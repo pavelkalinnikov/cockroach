@@ -104,7 +104,7 @@ func newLogWithSize(
 	if err != nil {
 		panic(err) // TODO(pav-kv): the storage should always cache the last term.
 	}
-	last := entryID{term: lastTerm, index: lastIndex}
+	last := EntryID{Term: lastTerm, Index: lastIndex}
 	return &raftLog{
 		storage:             storage,
 		unstable:            newUnstable(last, logger),
@@ -123,7 +123,7 @@ func (l *raftLog) String() string {
 	// TODO(pav-kv): clean-up this message. It will change all the datadriven
 	// tests, so do it in a contained PR.
 	return fmt.Sprintf("committed=%d, applied=%d, applying=%d, unstable.offset=%d, unstable.offsetInProgress=%d, len(unstable.Entries)=%d",
-		l.committed, l.applied, l.applying, l.unstable.prev.index+1, l.unstable.entryInProgress+1, len(l.unstable.entries))
+		l.committed, l.applied, l.applying, l.unstable.prev.Index+1, l.unstable.entryInProgress+1, len(l.unstable.entries))
 }
 
 // accTerm returns the term of the leader whose append was accepted into the log
@@ -207,17 +207,17 @@ func (l *raftLog) match(s logSlice) (uint64, bool) {
 	// to fetching an entry from storage. This is inefficient, we can improve it.
 	// Logs that don't match at one index, don't match at all indices above. So we
 	// can use binary search to find the fork.
-	match := s.prev.index
+	match := s.prev.Index
 	for i := range s.entries {
 		id := pbEntryID(&s.entries[i])
 		if l.matchTerm(id) {
-			match = id.index
+			match = id.Index
 			continue
 		}
-		if id.index <= l.lastIndex() {
+		if id.Index <= l.lastIndex() {
 			// TODO(pav-kv): should simply print %+v of the id.
 			l.logger.Infof("found conflict at index %d [existing term: %d, conflicting term: %d]",
-				id.index, l.zeroTermOnOutOfBounds(l.term(id.index)), id.term)
+				id.Index, l.zeroTermOnOutOfBounds(l.term(id.Index)), id.Term)
 		}
 		return match, true
 	}
@@ -318,7 +318,7 @@ func (l *raftLog) hasNextCommittedEnts(allowUnstable bool) bool {
 func (l *raftLog) maxAppliableIndex(allowUnstable bool) uint64 {
 	hi := l.committed
 	if !allowUnstable {
-		hi = min(hi, l.unstable.prev.index)
+		hi = min(hi, l.unstable.prev.Index)
 	}
 	return hi
 }
@@ -423,13 +423,13 @@ func (l *raftLog) stableSnapTo(i uint64) { l.unstable.stableSnapTo(i) }
 func (l *raftLog) acceptUnstable() { l.unstable.acceptInProgress() }
 
 // lastEntryID returns the ID of the last entry in the log.
-func (l *raftLog) lastEntryID() entryID {
+func (l *raftLog) lastEntryID() EntryID {
 	index := l.lastIndex()
 	t, err := l.term(index)
 	if err != nil {
 		l.logger.Panicf("unexpected error when getting the last term at %d: %v", index, err)
 	}
-	return entryID{term: t, index: index}
+	return EntryID{Term: t, Index: index}
 }
 
 func (l *raftLog) term(i uint64) (uint64, error) {
@@ -443,7 +443,7 @@ func (l LogSnapshot) term(index uint64) (uint64, error) {
 	// unstable log, we know it was in the valid range.
 	if index > l.unstable.lastIndex() {
 		return 0, ErrUnavailable
-	} else if index >= l.unstable.prev.index {
+	} else if index >= l.unstable.prev.Index {
 		return l.unstable.termAt(index), nil
 	} else if index+1 < l.first {
 		return 0, ErrCompacted
@@ -489,26 +489,26 @@ func (l *raftLog) allEntries() []pb.Entry {
 // later term is more up-to-date. If the logs end with the same term, then
 // whichever log has the larger lastIndex is more up-to-date. If the logs are
 // the same, the given log is up-to-date.
-func (l *raftLog) isUpToDate(their entryID) bool {
+func (l *raftLog) isUpToDate(their EntryID) bool {
 	our := l.lastEntryID()
-	return their.term > our.term || their.term == our.term && their.index >= our.index
+	return their.Term > our.Term || their.Term == our.Term && their.Index >= our.Index
 }
 
-func (l *raftLog) matchTerm(id entryID) bool {
-	t, err := l.term(id.index)
+func (l *raftLog) matchTerm(id EntryID) bool {
+	t, err := l.term(id.Index)
 	if err != nil {
 		return false
 	}
-	return t == id.term
+	return t == id.Term
 }
 
 func (l *raftLog) restore(s snapshot) bool {
 	id := s.lastEntryID()
-	l.logger.Infof("log [%s] starts to restore snapshot [index: %d, term: %d]", l, id.index, id.term)
+	l.logger.Infof("log [%s] starts to restore snapshot [index: %d, term: %d]", l, id.Index, id.Term)
 	if !l.unstable.restore(s) {
 		return false
 	}
-	l.committed = id.index
+	l.committed = id.Index
 	return true
 }
 
@@ -566,7 +566,7 @@ func (l LogSnapshot) LogSlice(lo, hi uint64, maxSize uint64) (LogSlice, error) {
 	}
 	return logSlice{
 		term:    l.unstable.term,
-		prev:    entryID{term: prevTerm, index: lo},
+		prev:    EntryID{Index: lo, Term: prevTerm},
 		entries: ents,
 	}, nil
 }
@@ -579,7 +579,7 @@ func (l LogSnapshot) slice(lo, hi uint64, maxSize entryEncodingSize) ([]pb.Entry
 	}
 
 	// Fast path: the (lo, hi] interval is fully in the unstable log.
-	if lo >= l.unstable.prev.index {
+	if lo >= l.unstable.prev.Index {
 		ents := limitSize(l.unstable.sub(lo, hi), maxSize)
 		// NB: use the full slice expression to protect the unstable slice from
 		// potential appends to the returned slice.
@@ -587,7 +587,7 @@ func (l LogSnapshot) slice(lo, hi uint64, maxSize entryEncodingSize) ([]pb.Entry
 	}
 
 	// Invariant: lo < cut = min(hi, l.unstable.prev.index).
-	cut := min(hi, l.unstable.prev.index)
+	cut := min(hi, l.unstable.prev.Index)
 	// TODO(pav-kv): make Entries() take (lo, hi] instead of [lo, hi), for
 	// consistency. All raft log slices are constructed in context of being
 	// appended after a certain index, so (lo, hi] addressing makes more sense.
@@ -599,7 +599,7 @@ func (l LogSnapshot) slice(lo, hi uint64, maxSize entryEncodingSize) ([]pb.Entry
 	} else if err != nil {
 		panic(err) // TODO(pav-kv): handle errors uniformly
 	}
-	if hi <= l.unstable.prev.index { // all (lo, hi] entries are in storage
+	if hi <= l.unstable.prev.Index { // all (lo, hi] entries are in storage
 		return ents, nil
 	}
 	// Invariant below: lo < cut < hi, and cut == l.unstable.prev.index.

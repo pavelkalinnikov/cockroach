@@ -26,36 +26,36 @@ import (
 
 func TestEntryID(t *testing.T) {
 	// Some obvious checks first.
-	require.Equal(t, entryID{term: 5, index: 10}, entryID{term: 5, index: 10})
-	require.NotEqual(t, entryID{term: 4, index: 10}, entryID{term: 5, index: 10})
-	require.NotEqual(t, entryID{term: 5, index: 9}, entryID{term: 5, index: 10})
+	require.Equal(t, EntryID{Term: 5, Index: 10}, EntryID{Term: 5, Index: 10})
+	require.NotEqual(t, EntryID{Term: 4, Index: 10}, EntryID{Term: 5, Index: 10})
+	require.NotEqual(t, EntryID{Term: 5, Index: 9}, EntryID{Term: 5, Index: 10})
 
 	for _, tt := range []struct {
 		entry pb.Entry
-		want  entryID
+		want  EntryID
 	}{
-		{entry: pb.Entry{}, want: entryID{term: 0, index: 0}},
-		{entry: pb.Entry{Term: 1, Index: 2, Data: []byte("data")}, want: entryID{term: 1, index: 2}},
-		{entry: pb.Entry{Term: 10, Index: 123}, want: entryID{term: 10, index: 123}},
+		{entry: pb.Entry{}, want: EntryID{Term: 0, Index: 0}},
+		{entry: pb.Entry{Term: 1, Index: 2, Data: []byte("data")}, want: EntryID{Term: 1, Index: 2}},
+		{entry: pb.Entry{Term: 10, Index: 123}, want: EntryID{Term: 10, Index: 123}},
 	} {
 		require.Equal(t, tt.want, pbEntryID(&tt.entry))
 	}
 }
 
 func TestLogSlice(t *testing.T) {
-	id := func(index, term uint64) entryID {
-		return entryID{term: term, index: index}
+	id := func(index, term uint64) EntryID {
+		return EntryID{Term: term, Index: index}
 	}
 	e := func(index, term uint64) pb.Entry {
 		return pb.Entry{Term: term, Index: index}
 	}
 	for _, tt := range []struct {
 		term    uint64
-		prev    entryID
+		prev    EntryID
 		entries []pb.Entry
 
 		notOk bool
-		last  entryID
+		last  EntryID
 	}{
 		// Empty "dummy" slice, starting at (0, 0) origin of the log.
 		{last: id(0, 0)},
@@ -91,10 +91,10 @@ func TestLogSlice(t *testing.T) {
 			}
 			last := s.lastEntryID()
 			require.Equal(t, tt.last, last)
-			require.Equal(t, last.index, s.lastIndex())
-			require.Equal(t, LogMark{Term: tt.term, Index: last.index}, s.mark())
+			require.Equal(t, last.Index, s.lastIndex())
+			require.Equal(t, LogMark{Term: tt.term, Index: last.Index}, s.mark())
 
-			require.Equal(t, tt.prev.term, s.termAt(tt.prev.index))
+			require.Equal(t, tt.prev.Term, s.termAt(tt.prev.Index))
 			for _, e := range tt.entries {
 				require.Equal(t, e.Term, s.termAt(e.Index))
 			}
@@ -103,15 +103,15 @@ func TestLogSlice(t *testing.T) {
 }
 
 func TestLogSliceForward(t *testing.T) {
-	id := func(index, term uint64) entryID {
-		return entryID{term: term, index: index}
+	id := func(index, term uint64) EntryID {
+		return EntryID{Term: term, Index: index}
 	}
-	ls := func(prev entryID, terms ...uint64) logSlice {
+	ls := func(prev EntryID, terms ...uint64) logSlice {
 		empty := make([]pb.Entry, 0) // hack to canonicalize empty slices
 		return logSlice{
 			term:    8,
 			prev:    prev,
-			entries: append(empty, index(prev.index+1).terms(terms...)...),
+			entries: append(empty, index(prev.Index+1).terms(terms...)...),
 		}
 	}
 	for _, tt := range []struct {
@@ -134,8 +134,8 @@ func TestLogSliceForward(t *testing.T) {
 }
 
 func TestSnapshot(t *testing.T) {
-	id := func(index, term uint64) entryID {
-		return entryID{term: term, index: index}
+	id := func(index, term uint64) EntryID {
+		return EntryID{Term: term, Index: index}
 	}
 	snap := func(index, term uint64) pb.Snapshot {
 		return pb.Snapshot{Metadata: pb.SnapshotMetadata{
@@ -146,7 +146,7 @@ func TestSnapshot(t *testing.T) {
 		term  uint64
 		snap  pb.Snapshot
 		notOk bool
-		last  entryID
+		last  EntryID
 	}{
 		// Empty "dummy" snapshot, at (0, 0) origin of the log.
 		{last: id(0, 0)},
@@ -163,8 +163,8 @@ func TestSnapshot(t *testing.T) {
 			}
 			last := s.lastEntryID()
 			require.Equal(t, tt.last, last)
-			require.Equal(t, last.index, s.lastIndex())
-			require.Equal(t, LogMark{Term: tt.term, Index: last.index}, s.mark())
+			require.Equal(t, last.Index, s.lastIndex())
+			require.Equal(t, LogMark{Term: tt.term, Index: last.Index}, s.mark())
 		})
 	}
 }

@@ -102,7 +102,7 @@ type unstable struct {
 	logger raftlogger.Logger
 }
 
-func newUnstable(last entryID, logger raftlogger.Logger) unstable {
+func newUnstable(last EntryID, logger raftlogger.Logger) unstable {
 	// To initialize the last accepted term (logSlice.term) correctly, we make
 	// sure its invariant is true: the log is a prefix of the term's leader's log.
 	// This can be achieved by conservatively initializing to the term of the last
@@ -119,8 +119,8 @@ func newUnstable(last entryID, logger raftlogger.Logger) unstable {
 	// leader Term) gives us more information about the log, and then allows
 	// bumping its commit index sooner than when the next MsgApp arrives.
 	return unstable{
-		logSlice:        logSlice{term: last.term, prev: last},
-		entryInProgress: last.index,
+		logSlice:        logSlice{term: last.Term, prev: last},
+		entryInProgress: last.Index,
 		logger:          logger,
 	}
 }
@@ -140,7 +140,7 @@ func (u *unstable) nextEntries() []pb.Entry {
 	if u.entryInProgress == u.lastIndex() {
 		return nil
 	}
-	return u.entries[u.entryInProgress-u.prev.index:]
+	return u.entries[u.entryInProgress-u.prev.Index:]
 }
 
 // nextSnapshot returns the unstable snapshot, if one exists that is not already
@@ -181,7 +181,7 @@ func (u *unstable) stableTo(mark LogMark) {
 		u.logger.Infof("entry at index %d matched unstable snapshot; ignoring", mark.Index)
 		return
 	}
-	if mark.Index <= u.prev.index || mark.Index > u.lastIndex() {
+	if mark.Index <= u.prev.Index || mark.Index > u.lastIndex() {
 		// Unstable entry missing. Ignore.
 		u.logger.Infof("entry at index %d missing from unstable log; ignoring", mark.Index)
 		return
@@ -248,7 +248,7 @@ func (u *unstable) restore(s snapshot) bool {
 	u.snapshot = &s.snap
 	u.logSlice = logSlice{term: term, prev: s.lastEntryID()}
 	u.snapshotInProgress = false
-	u.entryInProgress = u.prev.index
+	u.entryInProgress = u.prev.Index
 	return true
 }
 
@@ -281,7 +281,7 @@ func (u *unstable) truncateAndAppend(a logSlice) bool {
 	//
 	// If a.prev.index == last.index, then the last entry term did not match in
 	// the check above, so we must reject this case too.
-	if a.prev.index >= last.index {
+	if a.prev.Index >= last.Index {
 		return false
 	}
 	// Below, we handle the index regression case, a.prev.index < last.index.
@@ -299,27 +299,27 @@ func (u *unstable) truncateAndAppend(a logSlice) bool {
 	// It is a defense-in-depth guarding the invariant: if snapshot != nil then
 	// prev == snapshot.{term,index}. The code regresses prev, so we don't want
 	// the snapshot ID to get out of sync with it.
-	if u.snapshot != nil && a.prev.index < u.snapshot.Metadata.Index {
+	if u.snapshot != nil && a.prev.Index < u.snapshot.Metadata.Index {
 		u.logger.Panicf("appending at %+v before snapshot %s", a.prev, DescribeSnapshot(*u.snapshot))
 		return false
 	}
 
 	// Truncate the log and append new entries. Regress the entryInProgress mark
 	// to reflect that the truncated entries are no longer considered in progress.
-	if a.prev.index <= u.prev.index {
+	if a.prev.Index <= u.prev.Index {
 		u.logSlice = a // replace the entire logSlice with the latest append
 		// TODO(pav-kv): clean up the logging message. It will change all datadriven
 		// test outputs, so do it in a contained PR.
-		u.logger.Infof("replace the unstable entries from index %d", a.prev.index+1)
+		u.logger.Infof("replace the unstable entries from index %d", a.prev.Index+1)
 	} else {
 		u.term = a.term // update the last accepted term
 		// Use the full slice expression to cause copy-on-write on this or a
 		// subsequent (if a.entries is empty) append to u.entries. The truncated
 		// part of the old slice can still be referenced elsewhere.
-		keep := u.entries[:a.prev.index-u.prev.index]
+		keep := u.entries[:a.prev.Index-u.prev.Index]
 		u.entries = append(keep[:len(keep):len(keep)], a.entries...)
-		u.logger.Infof("truncate the unstable entries before index %d", a.prev.index+1)
+		u.logger.Infof("truncate the unstable entries before index %d", a.prev.Index+1)
 	}
-	u.entryInProgress = min(u.entryInProgress, a.prev.index)
+	u.entryInProgress = min(u.entryInProgress, a.prev.Index)
 	return true
 }

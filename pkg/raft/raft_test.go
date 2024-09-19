@@ -1162,7 +1162,7 @@ func TestHandleHeartbeat(t *testing.T) {
 
 	for i, tt := range tests {
 		storage := newTestMemoryStorage(withPeers(1, 2))
-		init := entryID{}.append(1, 1, tt.accTerm)
+		init := EntryID{}.append(1, 1, tt.accTerm)
 		require.NoError(t, storage.Append(init.entries))
 		sm := newTestRaft(1, 5, 1, storage)
 		sm.becomeFollower(init.term, 2)
@@ -1383,7 +1383,7 @@ func testRecvMsgVote(t *testing.T, msgType pb.MessageType) {
 		// what the recipient node does when receiving a message with a
 		// different term number, so we simply initialize both term numbers to
 		// be the same.
-		term := max(sm.raftLog.lastEntryID().term, tt.logTerm)
+		term := max(sm.raftLog.lastEntryID().Term, tt.logTerm)
 		sm.Term = term
 		sm.Step(pb.Message{Type: msgType, Term: term, From: 2, Index: tt.index, LogTerm: tt.logTerm})
 
@@ -2149,7 +2149,7 @@ func TestRecvMsgBeat(t *testing.T) {
 }
 
 func TestLeaderIncreaseNext(t *testing.T) {
-	init := entryID{}.append(1, 2, 3)
+	init := EntryID{}.append(1, 2, 3)
 	tests := []struct {
 		// progress
 		state tracker.StateType
@@ -2506,7 +2506,7 @@ func TestLearnerReceiveSnapshot(t *testing.T) {
 }
 
 func TestRestoreIgnoreSnapshot(t *testing.T) {
-	init := entryID{}.append(1, 1, 1)
+	init := EntryID{}.append(1, 1, 1)
 	commit := uint64(1)
 	storage := newTestMemoryStorage(withPeers(1, 2))
 	sm := newTestRaft(1, 10, 1, storage)
