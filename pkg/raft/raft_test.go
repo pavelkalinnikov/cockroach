@@ -1163,10 +1163,10 @@ func TestHandleHeartbeat(t *testing.T) {
 	for i, tt := range tests {
 		storage := newTestMemoryStorage(withPeers(1, 2))
 		init := EntryID{}.append(1, 1, tt.accTerm)
-		require.NoError(t, storage.Append(init.entries))
+		require.NoError(t, storage.Append(init.Entries))
 		sm := newTestRaft(1, 5, 1, storage)
-		sm.becomeFollower(init.term, 2)
-		sm.raftLog.commitTo(LogMark{Term: init.term, Index: commit})
+		sm.becomeFollower(init.Term, 2)
+		sm.raftLog.commitTo(LogMark{Term: init.Term, Index: commit})
 		sm.handleHeartbeat(tt.m)
 		m := sm.readMessages()
 		require.Len(t, m, 1, "#%d", i)
@@ -2159,14 +2159,14 @@ func TestLeaderIncreaseNext(t *testing.T) {
 	}{
 		// state replicate, optimistically increase next
 		// previous entries + noop entry + propose + 1
-		{tracker.StateReplicate, 2, uint64(len(init.entries) + 1 + 1 + 1)},
+		{tracker.StateReplicate, 2, uint64(len(init.Entries) + 1 + 1 + 1)},
 		// state probe, not optimistically increase next
 		{tracker.StateProbe, 2, 2},
 	}
 
 	for i, tt := range tests {
 		sm := newTestRaft(1, 10, 1, newTestMemoryStorage(withPeers(1, 2)))
-		sm.becomeFollower(init.term, None)
+		sm.becomeFollower(init.Term, None)
 		require.True(t, sm.raftLog.append(init))
 		sm.becomeCandidate()
 		sm.becomeLeader()
@@ -2511,7 +2511,7 @@ func TestRestoreIgnoreSnapshot(t *testing.T) {
 	storage := newTestMemoryStorage(withPeers(1, 2))
 	sm := newTestRaft(1, 10, 1, storage)
 	require.True(t, sm.raftLog.append(init))
-	sm.raftLog.commitTo(LogMark{Term: init.term, Index: commit})
+	sm.raftLog.commitTo(LogMark{Term: init.Term, Index: commit})
 
 	s := snapshot{
 		term: 1,

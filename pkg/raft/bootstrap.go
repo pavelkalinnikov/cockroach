@@ -47,14 +47,14 @@ func (rn *RawNode) Bootstrap(peers []Peer) error {
 	// TODO(tbg): remove StartNode and give the application the right tools to
 	// bootstrap the initial membership in a cleaner way.
 	rn.raft.becomeFollower(1, None)
-	app := LogSlice{term: 1, entries: make([]pb.Entry, 0, len(peers))}
+	app := LogSlice{Term: 1, Entries: make([]pb.Entry, 0, len(peers))}
 	for i, peer := range peers {
 		cc := pb.ConfChange{Type: pb.ConfChangeAddNode, NodeID: peer.ID, Context: peer.Context}
 		data, err := cc.Marshal()
 		if err != nil {
 			return err
 		}
-		app.entries = append(app.entries, pb.Entry{
+		app.Entries = append(app.Entries, pb.Entry{
 			Type: pb.EntryConfChange, Term: 1, Index: uint64(i + 1), Data: data,
 		})
 	}

@@ -84,7 +84,7 @@ func TestLogSlice(t *testing.T) {
 		{term: 10, prev: id(12, 2), entries: []pb.Entry{e(13, 2), e(14, 3)}, last: id(14, 3)},
 	} {
 		t.Run("", func(t *testing.T) {
-			s := LogSlice{term: tt.term, prev: tt.prev, entries: tt.entries}
+			s := LogSlice{Term: tt.term, Prev: tt.prev, Entries: tt.entries}
 			require.Equal(t, tt.notOk, s.valid() != nil)
 			if tt.notOk {
 				return
@@ -109,9 +109,9 @@ func TestLogSliceForward(t *testing.T) {
 	ls := func(prev EntryID, terms ...uint64) LogSlice {
 		empty := make([]pb.Entry, 0) // hack to canonicalize empty slices
 		return LogSlice{
-			term:    8,
-			prev:    prev,
-			entries: append(empty, index(prev.Index+1).terms(terms...)...),
+			Term:    8,
+			Prev:    prev,
+			Entries: append(empty, index(prev.Index+1).terms(terms...)...),
 		}
 	}
 	for _, tt := range []struct {

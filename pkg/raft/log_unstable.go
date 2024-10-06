@@ -119,7 +119,7 @@ func newUnstable(last EntryID, logger raftlogger.Logger) unstable {
 	// leader Term) gives us more information about the log, and then allows
 	// bumping its commit index sooner than when the next MsgApp arrives.
 	return unstable{
-		LogSlice:        LogSlice{term: last.Term, prev: last},
+		LogSlice:        LogSlice{Term: last.Term, Prev: last},
 		entryInProgress: last.Index,
 		logger:          logger,
 	}
@@ -140,7 +140,7 @@ func (u *unstable) nextEntries() []pb.Entry {
 	if u.entryInProgress == u.lastIndex() {
 		return nil
 	}
-	return u.entries[u.entryInProgress-u.prev.Index:]
+	return u.Entries[u.entryInProgress-u.Prev.Index:]
 }
 
 // nextSnapshot returns the unstable snapshot, if one exists that is not already
@@ -168,12 +168,12 @@ func (u *unstable) acceptInProgress() {
 // The method makes sure the entries can not be overwritten by an in-progress
 // log append. See the related comment in newStorageAppendRespMsg.
 func (u *unstable) stableTo(mark LogMark) {
-	if mark.Term != u.term {
+	if mark.Term != u.Term {
 		// The last accepted term has changed. Ignore. This is possible if part or
 		// all of the unstable log was replaced between that time that a set of
 		// entries started to be written to stable storage and when they finished.
 		u.logger.Infof("mark (term,index)=(%d,%d) mismatched the last accepted "+
-			"term %d in unstable log; ignoring ", mark.Term, mark.Index, u.term)
+			"term %d in unstable log; ignoring ", mark.Term, mark.Index, u.Term)
 		return
 	}
 	if u.snapshot != nil && mark.Index == u.snapshot.Metadata.Index {
@@ -181,7 +181,7 @@ func (u *unstable) stableTo(mark LogMark) {
 		u.logger.Infof("entry at index %d matched unstable snapshot; ignoring", mark.Index)
 		return
 	}
-	if mark.Index <= u.prev.Index || mark.Index > u.lastIndex() {
+	if mark.Index <= u.Prev.Index || mark.Index > u.lastIndex() {
 		// Unstable entry missing. Ignore.
 		u.logger.Infof("entry at index %d missing from unstable log; ignoring", mark.Index)
 		return
@@ -208,12 +208,12 @@ func (u *unstable) shrinkEntriesArray() {
 	// memory usage vs number of allocations. It could probably be improved
 	// with some focused tuning.
 	const lenMultiple = 2
-	if len(u.entries) == 0 {
-		u.entries = nil
-	} else if len(u.entries)*lenMultiple < cap(u.entries) {
-		newEntries := make([]pb.Entry, len(u.entries))
-		copy(newEntries, u.entries)
-		u.entries = newEntries
+	if len(u.Entries) == 0 {
+		u.Entries = nil
+	} else if len(u.Entries)*lenMultiple < cap(u.Entries) {
+		newEntries := make([]pb.Entry, len(u.Entries))
+		copy(newEntries, u.Entries)
+		u.Entries = newEntries
 	}
 }
 
@@ -236,44 +236,44 @@ func (u *unstable) restore(s snapshot) bool {
 	// Alternatively, we could retain a suffix of the log instead of truncating
 	// it, but at the time of writing the whole stack (including storage) is
 	// written such that a snapshot always clears the log.
-	if s.term <= u.term && s.lastIndex() < u.lastIndex() {
+	if s.term <= u.Term && s.lastIndex() < u.lastIndex() {
 		return false
 	}
 	// If s.term <= u.term, our log is consistent with the snapshot. Set the new
 	// accepted term to the max of the two so that u.term does not regress. At the
 	// time of writing, s.term is always >= u.term, because s.term == raft.Term
 	// and u.term <= raft.Term. It could be relaxed in the future.
-	term := max(u.term, s.term)
+	term := max(u.Term, s.term)
 
 	u.snapshot = &s.snap
-	u.LogSlice = LogSlice{term: term, prev: s.lastEntryID()}
+	u.LogSlice = LogSlice{Term: term, Prev: s.lastEntryID()}
 	u.snapshotInProgress = false
-	u.entryInProgress = u.prev.Index
+	u.entryInProgress = u.Prev.Index
 	return true
 }
 
 // append adds the given log slice to the end of the log. Returns false if this
 // can not be done.
 func (u *unstable) append(a LogSlice) bool {
-	if a.term < u.term {
+	if a.Term < u.Term {
 		return false // append from an outdated log
-	} else if a.prev != u.lastEntryID() {
+	} else if a.Prev != u.lastEntryID() {
 		return false // not a valid append at the end of the log
 	}
-	u.term = a.term // update the last accepted term
-	u.entries = append(u.entries, a.entries...)
+	u.Term = a.Term // update the last accepted term
+	u.Entries = append(u.Entries, a.Entries...)
 	return true
 }
 
 func (u *unstable) truncateAndAppend(a LogSlice) bool {
-	if a.term < u.term {
+	if a.Term < u.Term {
 		return false // append from an outdated log
 	}
 	// Fast path for appends at the end of the log.
 	last := u.lastEntryID()
-	if a.prev == last {
-		u.term = a.term // update the last accepted term
-		u.entries = append(u.entries, a.entries...)
+	if a.Prev == last {
+		u.Term = a.Term // update the last accepted term
+		u.Entries = append(u.Entries, a.Entries...)
 		return true
 	}
 	// If a.prev.index > last.index, we can not accept this write because it will
@@ -281,14 +281,14 @@ func (u *unstable) truncateAndAppend(a LogSlice) bool {
 	//
 	// If a.prev.index == last.index, then the last entry term did not match in
 	// the check above, so we must reject this case too.
-	if a.prev.Index >= last.Index {
+	if a.Prev.Index >= last.Index {
 		return false
 	}
 	// Below, we handle the index regression case, a.prev.index < last.index.
 	//
 	// Within the same leader term, we enforce the log to be append-only, and only
 	// allow index regressions (which cause log truncations) when a.term > u.term.
-	if a.term == u.term {
+	if a.Term == u.Term {
 		return false
 	}
 
@@ -299,27 +299,27 @@ func (u *unstable) truncateAndAppend(a LogSlice) bool {
 	// It is a defense-in-depth guarding the invariant: if snapshot != nil then
 	// prev == snapshot.{term,index}. The code regresses prev, so we don't want
 	// the snapshot ID to get out of sync with it.
-	if u.snapshot != nil && a.prev.Index < u.snapshot.Metadata.Index {
-		u.logger.Panicf("appending at %+v before snapshot %s", a.prev, DescribeSnapshot(*u.snapshot))
+	if u.snapshot != nil && a.Prev.Index < u.snapshot.Metadata.Index {
+		u.logger.Panicf("appending at %+v before snapshot %s", a.Prev, DescribeSnapshot(*u.snapshot))
 		return false
 	}
 
 	// Truncate the log and append new entries. Regress the entryInProgress mark
 	// to reflect that the truncated entries are no longer considered in progress.
-	if a.prev.Index <= u.prev.Index {
+	if a.Prev.Index <= u.Prev.Index {
 		u.LogSlice = a // replace the entire LogSlice with the latest append
 		// TODO(pav-kv): clean up the logging message. It will change all datadriven
 		// test outputs, so do it in a contained PR.
-		u.logger.Infof("replace the unstable entries from index %d", a.prev.Index+1)
+		u.logger.Infof("replace the unstable entries from index %d", a.Prev.Index+1)
 	} else {
-		u.term = a.term // update the last accepted term
+		u.Term = a.Term // update the last accepted term
 		// Use the full slice expression to cause copy-on-write on this or a
 		// subsequent (if a.entries is empty) append to u.entries. The truncated
 		// part of the old slice can still be referenced elsewhere.
-		keep := u.entries[:a.prev.Index-u.prev.Index]
-		u.entries = append(keep[:len(keep):len(keep)], a.entries...)
-		u.logger.Infof("truncate the unstable entries before index %d", a.prev.Index+1)
+		keep := u.Entries[:a.Prev.Index-u.Prev.Index]
+		u.Entries = append(keep[:len(keep):len(keep)], a.Entries...)
+		u.logger.Infof("truncate the unstable entries before index %d", a.Prev.Index+1)
 	}
-	u.entryInProgress = min(u.entryInProgress, a.prev.Index)
+	u.entryInProgress = min(u.entryInProgress, a.Prev.Index)
 	return true
 }

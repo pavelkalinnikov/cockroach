@@ -637,17 +637,17 @@ func (r *raft) send(m pb.Message) {
 func (r *raft) prepareMsgApp(to pb.PeerID, pr *tracker.Progress, ls LogSlice) pb.Message {
 	commit := r.raftLog.committed
 	// Update the progress accordingly to the message being sent.
-	pr.SentEntries(len(ls.entries), uint64(payloadsSize(ls.entries)))
+	pr.SentEntries(len(ls.Entries), uint64(payloadsSize(ls.Entries)))
 	pr.MaybeUpdateSentCommit(commit)
 	// Hand over the message to the caller.
 	return pb.Message{
 		From:    r.id,
 		To:      to,
 		Type:    pb.MsgApp,
-		Term:    ls.term,
-		Index:   ls.prev.Index,
-		LogTerm: ls.prev.Term,
-		Entries: ls.entries,
+		Term:    ls.Term,
+		Index:   ls.Prev.Index,
+		LogTerm: ls.Prev.Term,
+		Entries: ls.Entries,
 		Commit:  commit,
 		Match:   pr.Match,
 	}
@@ -659,11 +659,11 @@ func (r *raft) prepareMsgApp(to pb.PeerID, pr *tracker.Progress, ls LogSlice) pb
 // Returns false if the current state of the node does not permit this MsgApp
 // send, e.g. the log slice is misaligned with the replication flow status.
 func (r *raft) maybePrepareMsgApp(to pb.PeerID, ls LogSlice) (pb.Message, bool) {
-	if r.state != StateLeader || r.Term != ls.term {
+	if r.state != StateLeader || r.Term != ls.Term {
 		return pb.Message{}, false
 	}
 	pr := r.trk.Progress(to)
-	if pr == nil || pr.State != tracker.StateReplicate || pr.Next != ls.prev.Index+1 {
+	if pr == nil || pr.State != tracker.StateReplicate || pr.Next != ls.Prev.Index+1 {
 		return pb.Message{}, false
 	}
 	return r.prepareMsgApp(to, pr, ls), true
@@ -708,9 +708,9 @@ func (r *raft) maybeSendAppend(to pb.PeerID) bool {
 	}
 
 	r.send(r.prepareMsgApp(to, pr, LogSlice{
-		term:    r.Term,
-		prev:    EntryID{Index: prevIndex, Term: prevTerm},
-		entries: entries,
+		Term:    r.Term,
+		Prev:    EntryID{Index: prevIndex, Term: prevTerm},
+		Entries: entries,
 	}))
 	return true
 }
@@ -732,8 +732,8 @@ func (r *raft) sendPing(to pb.PeerID) bool {
 	}
 	// NB: this sets MsgAppProbesPaused to true again.
 	r.send(r.prepareMsgApp(to, pr, LogSlice{
-		term: r.Term,
-		prev: EntryID{Index: prevIndex, Term: prevTerm},
+		Term: r.Term,
+		Prev: EntryID{Index: prevIndex, Term: prevTerm},
 	}))
 	return true
 }
@@ -1051,7 +1051,7 @@ func (r *raft) appendEntry(es ...pb.Entry) (accepted bool) {
 		// Drop the proposal.
 		return false
 	}
-	app := LogSlice{term: r.Term, prev: last, entries: es}
+	app := LogSlice{Term: r.Term, Prev: last, Entries: es}
 	if err := app.valid(); err != nil {
 		r.logger.Panicf("%x leader could not append to its log: %v", r.id, err)
 	} else if !r.raftLog.append(app) {
@@ -2109,9 +2109,9 @@ func stepFollower(r *raft, m pb.Message) error {
 func logSliceFromMsgApp(m *pb.Message) LogSlice {
 	// TODO(pav-kv): consider also validating the LogSlice here.
 	return LogSlice{
-		term:    m.Term,
-		prev:    EntryID{Term: m.LogTerm, Index: m.Index},
-		entries: m.Entries,
+		Term:    m.Term,
+		Prev:    EntryID{Term: m.LogTerm, Index: m.Index},
+		Entries: m.Entries,
 	}
 }
 
@@ -2128,7 +2128,7 @@ func (r *raft) handleAppendEntries(m pb.Message) {
 		return
 	}
 
-	if a.prev.Index < r.raftLog.committed {
+	if a.Prev.Index < r.raftLog.committed {
 		r.send(pb.Message{To: m.From, Type: pb.MsgAppResp, Index: r.raftLog.committed,
 			Commit: r.raftLog.committed})
 		return

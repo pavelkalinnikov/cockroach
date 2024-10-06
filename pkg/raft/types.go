@@ -76,10 +76,10 @@ func (l LogMark) After(other LogMark) bool {
 // A well-formed LogSlice conforms to raft safety properties. It provides the
 // following guarantees:
 //
-//  1. entries[i].Index == prev.Index + 1 + i,
-//  2. prev.Term <= entries[0].Term,
-//  3. entries[i-1].Term <= entries[i].Term,
-//  4. entries[len-1].Term <= term.
+//  1. Entries[i].Index == Prev.Index + 1 + i,
+//  2. Prev.Term <= Entries[0].Term,
+//  3. Entries[i-1].Term <= Entries[i].Term,
+//  4. Entries[len-1].Term <= Term.
 //
 // Property (1) means the slice is contiguous. Properties (2) and (3) mean that
 // the terms of the entries in a log never regress. Property (4) means that a
@@ -91,71 +91,71 @@ func (l LogMark) After(other LogMark) bool {
 // or in a test code that manually hard-codes this struct. In these cases, the
 // invariants should be validated using the valid() method.
 type LogSlice struct {
-	// term is the leader term containing the given entries in its log.
-	term uint64
-	// prev is the ID of the entry immediately preceding the entries.
-	prev EntryID
-	// entries contains the consecutive entries representing this slice.
-	entries []pb.Entry
+	// Term is the leader term containing the given entries in its log.
+	Term uint64
+	// Prev is the ID of the entry immediately preceding the entries.
+	Prev EntryID
+	// Entries contains the consecutive entries representing this slice.
+	Entries []pb.Entry
 }
 
 // lastIndex returns the index of the last entry in this log slice. Returns
-// prev.index if there are no entries.
+// Prev.index if there are no entries.
 func (s LogSlice) lastIndex() uint64 {
-	return s.prev.Index + uint64(len(s.entries))
+	return s.Prev.Index + uint64(len(s.Entries))
 }
 
-// lastEntryID returns the ID of the last entry in this log slice, or prev if
+// lastEntryID returns the ID of the last entry in this log slice, or Prev if
 // there are no entries.
 func (s LogSlice) lastEntryID() EntryID {
-	if ln := len(s.entries); ln != 0 {
-		return pbEntryID(&s.entries[ln-1])
+	if ln := len(s.Entries); ln != 0 {
+		return pbEntryID(&s.Entries[ln-1])
 	}
-	return s.prev
+	return s.Prev
 }
 
 // mark returns the LogMark identifying the end of this LogSlice.
 func (s LogSlice) mark() LogMark {
-	return LogMark{Term: s.term, Index: s.lastIndex()}
+	return LogMark{Term: s.Term, Index: s.lastIndex()}
 }
 
 // termAt returns the term of the entry at the given index.
-// Requires: prev.Index <= index <= lastIndex().
+// Requires: Prev.Index <= index <= lastIndex().
 func (s LogSlice) termAt(index uint64) uint64 {
-	if index == s.prev.Index {
-		return s.prev.Term
+	if index == s.Prev.Index {
+		return s.Prev.Term
 	}
-	return s.entries[index-s.prev.Index-1].Term
+	return s.Entries[index-s.Prev.Index-1].Term
 }
 
-// forward returns a LogSlice with prev forwarded to the given index.
-// Requires: prev.Index <= index <= lastIndex().
+// forward returns a LogSlice with Prev forwarded to the given index.
+// Requires: Prev.Index <= index <= lastIndex().
 func (s LogSlice) forward(index uint64) LogSlice {
 	return LogSlice{
-		term:    s.term,
-		prev:    EntryID{Term: s.termAt(index), Index: index},
-		entries: s.entries[index-s.prev.Index:],
+		Term:    s.Term,
+		Prev:    EntryID{Term: s.termAt(index), Index: index},
+		Entries: s.Entries[index-s.Prev.Index:],
 	}
 }
 
 // sub returns the entries of this LogSlice with indices in (after, to].
 func (s LogSlice) sub(after, to uint64) []pb.Entry {
-	return s.entries[after-s.prev.Index : to-s.prev.Index]
+	return s.Entries[after-s.Prev.Index : to-s.Prev.Index]
 }
 
 // valid returns nil iff the LogSlice is a well-formed log slice. See LogSlice
 // comment for details on what constitutes a valid raft log slice.
 func (s LogSlice) valid() error {
-	prev := s.prev
-	for i := range s.entries {
-		id := pbEntryID(&s.entries[i])
+	prev := s.Prev
+	for i := range s.Entries {
+		id := pbEntryID(&s.Entries[i])
 		if id.Term < prev.Term || id.Index != prev.Index+1 {
-			return fmt.Errorf("leader term %d: entries %+v and %+v not consistent", s.term, prev, id)
+			return fmt.Errorf("leader term %d: entries %+v and %+v not consistent", s.Term, prev, id)
 		}
 		prev = id
 	}
-	if s.term < prev.Term {
-		return fmt.Errorf("leader term %d: entry %+v has a newer term", s.term, prev)
+	if s.Term < prev.Term {
+		return fmt.Errorf("leader term %d: entry %+v has a newer term", s.Term, prev)
 	}
 	return nil
 }

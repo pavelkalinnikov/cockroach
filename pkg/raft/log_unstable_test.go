@@ -29,7 +29,7 @@ func newUnstableForTesting(ls LogSlice, snap *pb.Snapshot) unstable {
 	return unstable{
 		snapshot:        snap,
 		LogSlice:        ls,
-		entryInProgress: ls.prev.Index,
+		entryInProgress: ls.Prev.Index,
 		logger:          raftlogger.DiscardLogger,
 	}
 }
@@ -37,15 +37,15 @@ func newUnstableForTesting(ls LogSlice, snap *pb.Snapshot) unstable {
 func (u *unstable) checkInvariants(t testing.TB) {
 	t.Helper()
 	require.NoError(t, u.LogSlice.valid())
-	require.GreaterOrEqual(t, u.entryInProgress, u.prev.Index)
+	require.GreaterOrEqual(t, u.entryInProgress, u.Prev.Index)
 	require.LessOrEqual(t, u.entryInProgress, u.lastIndex())
 	if u.snapshot != nil {
-		require.Equal(t, u.snapshot.Metadata.Term, u.prev.Term)
-		require.Equal(t, u.snapshot.Metadata.Index, u.prev.Index)
+		require.Equal(t, u.snapshot.Metadata.Term, u.Prev.Term)
+		require.Equal(t, u.snapshot.Metadata.Index, u.Prev.Index)
 	} else {
 		require.False(t, u.snapshotInProgress)
 	}
-	if u.entryInProgress > u.prev.Index && u.snapshot != nil {
+	if u.entryInProgress > u.Prev.Index && u.snapshot != nil {
 		require.True(t, u.snapshotInProgress)
 	}
 }
@@ -128,7 +128,7 @@ func TestUnstableRestore(t *testing.T) {
 	u.checkInvariants(t)
 
 	require.Equal(t, uint64(6), u.entryInProgress)
-	require.Zero(t, len(u.entries))
+	require.Zero(t, len(u.Entries))
 	require.Equal(t, &s.snap, u.snapshot)
 	require.False(t, u.snapshotInProgress)
 }
@@ -391,7 +391,7 @@ func TestUnstableStableTo(t *testing.T) {
 		t.Run("", func(t *testing.T) {
 			u := newUnstableForTesting(tt.ls, tt.snap)
 			u.entryInProgress = tt.entryInProgress
-			u.snapshotInProgress = u.snapshot != nil && u.entryInProgress > u.prev.Index
+			u.snapshotInProgress = u.snapshot != nil && u.entryInProgress > u.Prev.Index
 			u.checkInvariants(t)
 
 			if u.snapshotInProgress {
@@ -400,9 +400,9 @@ func TestUnstableStableTo(t *testing.T) {
 			u.checkInvariants(t)
 			u.stableTo(LogMark{Term: tt.term, Index: tt.index})
 			u.checkInvariants(t)
-			require.Equal(t, tt.wprev, u.prev.Index)
+			require.Equal(t, tt.wprev, u.Prev.Index)
 			require.Equal(t, tt.wentryInProgress, u.entryInProgress)
-			require.Equal(t, tt.wlen, len(u.entries))
+			require.Equal(t, tt.wlen, len(u.Entries))
 		})
 	}
 }
@@ -479,7 +479,7 @@ func TestUnstableTruncateAndAppend(t *testing.T) {
 		t.Run("", func(t *testing.T) {
 			u := newUnstableForTesting(tt.ls, tt.snap)
 			u.entryInProgress = tt.entryInProgress
-			u.snapshotInProgress = u.snapshot != nil && u.entryInProgress > u.prev.Index
+			u.snapshotInProgress = u.snapshot != nil && u.entryInProgress > u.Prev.Index
 			u.checkInvariants(t)
 
 			u.truncateAndAppend(tt.app)
