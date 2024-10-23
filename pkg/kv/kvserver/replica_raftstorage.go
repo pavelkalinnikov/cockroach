@@ -150,6 +150,12 @@ func (r *Replica) GetLeaseAppliedIndex() kvpb.LeaseAppliedIndex {
 	return r.shMu.state.LeaseAppliedIndex
 }
 
+// Applied implements the raft.Storage interface.
+func (r *replicaRaftStorage) Applied() uint64 {
+	r.mu.AssertRHeld()
+	return uint64(r.shMu.state.RaftAppliedIndex)
+}
+
 // Snapshot implements the raft.Storage interface.
 // Snapshot requires that r.mu is held for writing because it requires exclusive
 // access to r.mu.stateLoader.

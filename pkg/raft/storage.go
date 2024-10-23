@@ -105,6 +105,10 @@ type LogStorageSnapshot interface {
 
 // StateStorage provides read access to the state machine storage.
 type StateStorage interface {
+	// Applied returns the applied log index. Called only once during the RawNode
+	// initialization. After that, the applied index is maintained incrementally
+	// based on communication with the storage.
+	Applied() uint64
 	// Snapshot returns the most recent state machine snapshot.
 	Snapshot() (pb.Snapshot, error)
 }
@@ -240,6 +244,13 @@ func (ms *MemoryStorage) Snapshot() (pb.Snapshot, error) {
 	defer ms.Unlock()
 	ms.callStats.snapshot++
 	return ms.snapshot, nil
+}
+
+// Applied implements the StateStorage interface.
+func (ms *MemoryStorage) Applied() uint64 {
+	ms.Lock()
+	defer ms.Unlock()
+	return ms.snapshot.Metadata.Index
 }
 
 // ApplySnapshot overwrites the contents of this Storage object with

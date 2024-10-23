@@ -316,10 +316,8 @@ func (r *Replica) initRaftMuLockedReplicaMuLocked(s kvstorage.LoadedReplicaState
 func (r *Replica) initRaftGroupRaftMuLockedReplicaMuLocked() error {
 	ctx := r.AnnotateCtx(context.Background())
 	rg, err := raft.NewRawNode(newRaftConfig(
-		ctx,
 		(*replicaRaftStorage)(r),
 		raftpb.PeerID(r.replicaID),
-		r.shMu.state.RaftAppliedIndex,
 		r.store.cfg,
 		r.mu.currentRACv2Mode == rac2.MsgAppPull,
 		&raftLogger{ctx: ctx},

@@ -54,7 +54,6 @@ func (env *InteractionEnv) handleAddNodes(t *testing.T, d datadriven.TestData) e
 				arg.Scan(t, i, &cfg.MaxInflightMsgs)
 			case "index":
 				arg.Scan(t, i, &snap.Metadata.Index)
-				cfg.Applied = snap.Metadata.Index
 			case "content":
 				arg.Scan(t, i, &snap.Data)
 			case "async-storage-writes":

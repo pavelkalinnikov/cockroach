@@ -115,11 +115,6 @@ type Config struct {
 	// Storage when it needs. raft reads out the previous state and configuration
 	// out of storage when restarting.
 	Storage Storage
-	// Applied is the last applied index. It should only be set when restarting
-	// raft. raft will not return entries to the application smaller or equal to
-	// Applied. If Applied is unset when restarting, raft might return previous
-	// applied entries. This is a very application dependent configuration.
-	Applied uint64
 
 	// AsyncStorageWrites configures the raft node to write to its local storage
 	// (raft log and state machine) using a request/response message passing
@@ -479,8 +474,9 @@ func newRaft(c *Config) *raft {
 	if !IsEmptyHardState(hs) {
 		r.loadState(hs)
 	}
-	if c.Applied > 0 {
-		raftlog.appliedTo(c.Applied, 0 /* size */)
+	if applied := c.Storage.Applied(); applied > 0 {
+		// TODO(pav-kv): move this to raftLog initialization.
+		raftlog.appliedTo(applied, 0 /* size */)
 	}
 	r.becomeFollower(r.Term, r.lead)
 

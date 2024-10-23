@@ -380,10 +380,8 @@ func testStoreConfig(clock *hlc.Clock, version roachpb.Version) StoreConfig {
 }
 
 func newRaftConfig(
-	ctx context.Context,
 	strg raft.Storage,
 	id raftpb.PeerID,
-	appliedIndex kvpb.RaftIndex,
 	storeCfg StoreConfig,
 	lazyReplication bool,
 	logger raftlogger.Logger,
@@ -391,7 +389,6 @@ func newRaftConfig(
 ) *raft.Config {
 	return &raft.Config{
 		ID:                          id,
-		Applied:                     uint64(appliedIndex),
 		AsyncStorageWrites:          true,
 		ElectionTick:                storeCfg.RaftElectionTimeoutTicks,
 		HeartbeatTick:               storeCfg.RaftHeartbeatIntervalTicks,
