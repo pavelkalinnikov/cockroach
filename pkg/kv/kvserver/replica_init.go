@@ -199,19 +199,18 @@ func newUninitializedReplicaWithoutRaftGroup(
 	// r.AmbientContext.AddLogTag("@", fmt.Sprintf("%x", unsafe.Pointer(r)))
 
 	r.raftMu.stateLoader = stateloader.Make(rangeID)
-	r.raftMu.sideloaded = logstore.NewDiskSideloadStorage(
+	sideloaded := logstore.NewDiskSideloadStorage(
 		store.cfg.Settings,
 		rangeID,
 		store.TODOEngine().GetAuxiliaryDir(),
 		store.limiters.BulkIOWriteRate,
 		store.TODOEngine(),
 	)
-	// TODO(pav-kv): reference Replica and/or Store instead of copying a bunch of
-	// fields into the LogStore struct.
+	// TODO(pav-kv): make a LogStore constructor function.
 	r.raftMu.logStorage = &logstore.LogStore{
 		RangeID:  rangeID,
 		Engine:   store.TODOEngine(),
-		Sideload: r.raftMu.sideloaded,
+		Sideload: sideloaded,
 		// TODO(pav-kv): let it have its own StateLoader?
 		StateLoader: r.raftMu.stateLoader.StateLoader,
 		// NOTE: use the same SyncWaiter loop for all raft log writes performed by a

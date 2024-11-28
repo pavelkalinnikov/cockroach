@@ -65,7 +65,7 @@ func (r *raftTruncatorReplica) getPendingTruncs() *pendingLogTruncations {
 func (r *raftTruncatorReplica) sideloadedBytesIfTruncatedFromTo(
 	ctx context.Context, from, to kvpb.RaftIndex,
 ) (freed int64, err error) {
-	freed, _, err = r.raftMu.sideloaded.BytesIfTruncatedFromTo(ctx, from, to)
+	freed, _, err = r.raftMu.logStorage.Sideload.BytesIfTruncatedFromTo(ctx, from, to)
 	return freed, err
 }
 

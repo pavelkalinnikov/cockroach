@@ -149,7 +149,7 @@ func (b *replicaAppBatch) Stage(
 	if err := b.ab.runPostAddTriggers(ctx, &cmd.ReplicatedCmd, postAddEnv{
 		st:          b.r.store.cfg.Settings,
 		eng:         b.r.store.TODOEngine(),
-		sideloaded:  b.r.raftMu.sideloaded,
+		sideloaded:  b.r.raftMu.logStorage.Sideload,
 		bulkLimiter: b.r.store.limiters.BulkIOWriteRate,
 	}); err != nil {
 		return nil, err
@@ -449,7 +449,7 @@ func (b *replicaAppBatch) runPostAddTriggersReplicaOnly(
 			// We only need to check sideloaded entries in this path. The loosely
 			// coupled truncation mechanism in the other branch already ensures
 			// enacting truncations only after state machine synced.
-			if has, err := b.r.raftMu.sideloaded.HasAnyEntry(
+			if has, err := b.r.raftMu.logStorage.Sideload.HasAnyEntry(
 				ctx, b.truncState.Index, truncatedState.Index+1, // include end Index
 			); err != nil {
 				return errors.Wrap(err, "failed searching for sideloaded entries")

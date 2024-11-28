@@ -689,7 +689,7 @@ func (rlq *raftLogQueue) process(
 		// cached in-memory values.
 		r.raftMu.Lock()
 		n, err := logstore.ComputeRaftLogSize(
-			ctx, r.RangeID, r.store.TODOEngine(), r.raftMu.sideloaded)
+			ctx, r.RangeID, r.store.TODOEngine(), r.raftMu.logStorage.Sideload)
 		if err == nil {
 			r.mu.Lock()
 			r.shMu.raftLogSize = n
