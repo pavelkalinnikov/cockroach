@@ -148,6 +148,10 @@ type RaftState struct {
 	ByteSize  int64
 }
 
+func (r RaftState) Empty() bool {
+	return r.LastIndex == 0
+}
+
 // AppendStats describes a completed log storage append operation.
 type AppendStats struct {
 	Begin crtime.Mono
