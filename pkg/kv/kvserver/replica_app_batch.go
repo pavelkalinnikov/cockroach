@@ -16,6 +16,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvstorage"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/logstore"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/storage"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
@@ -449,11 +450,11 @@ func (b *replicaAppBatch) runPostAddTriggersReplicaOnly(
 			// We only need to check sideloaded entries in this path. The loosely
 			// coupled truncation mechanism in the other branch already ensures
 			// enacting truncations only after state machine synced.
-			if has, err := b.r.raftMu.logStorage.Sideload.HasAnyEntry(
-				ctx, b.truncState.Index, truncatedState.Index+1, // include end Index
+			if mustSync, err := logstore.CompactMustSync(
+				ctx, b.r.raftMu.logStorage.Sideload, b.truncState.Index, truncatedState.Index,
 			); err != nil {
-				return errors.Wrap(err, "failed searching for sideloaded entries")
-			} else if has {
+				return err
+			} else if mustSync {
 				b.changeTruncatesSideloadedFiles = true
 			}
 		} else {

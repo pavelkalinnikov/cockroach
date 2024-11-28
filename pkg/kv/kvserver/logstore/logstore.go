@@ -580,6 +580,26 @@ func Compact(
 	return true, nil
 }
 
+func CompactMustSync(
+	ctx context.Context, sideload SideloadStorage, old, new kvpb.RaftIndex,
+) (bool, error) {
+	// The compaction will apply with the provided batch. Determine if there are
+	// any sideloaded entries that will be removed as a side effect.
+	//
+	// We must sync the state machine batch application if the command removes any
+	// sideloaded log entries. Not doing so can lead to losing the entries. See
+	// the usage of changeTruncatesSideloadedFiles flag at the other end.
+	//
+	// We only need to check sideloaded entries in this path. The loosely coupled
+	// truncation mechanism in the other branch already ensures enacting
+	// truncations only after state machine synced.
+	has, err := sideload.HasAnyEntry(ctx, old, new+1) // include the new index
+	if err != nil {
+		return false, errors.Wrap(err, "failed searching for sideloaded entries")
+	}
+	return has, nil
+}
+
 // ComputeRaftLogSize computes the size (in bytes) of the Raft log from the
 // storage engine. This will iterate over the Raft log and sideloaded files, so
 // depending on the size of these it can be mildly to extremely expensive and
