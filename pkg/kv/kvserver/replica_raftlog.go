@@ -81,6 +81,10 @@ type raftLogState struct {
 // TODO(pav-kv): make it a proper type, and integrate with the logstore package.
 type replicaLogStorage Replica
 
+func (r *Replica) asLogStorage() *replicaLogStorage {
+	return (*replicaLogStorage)(r)
+}
+
 // Entries implements the raft.LogStorage interface.
 //
 // NB: maxBytes is advisory, and this method returns at least one entry (unless

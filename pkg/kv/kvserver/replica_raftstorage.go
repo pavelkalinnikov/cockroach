@@ -733,14 +733,18 @@ func (r *Replica) applySnapshot(
 	// performance implications are not likely to be drastic. If our
 	// feelings about this ever change, we can add a LastIndex field to
 	// raftpb.SnapshotMetadata.
-	r.shMu.lastIndexNotDurable = state.RaftAppliedIndex
-
-	// TODO(sumeer): We should be able to set this to
+	// TODO(pav-kv): the above comment seems stale, revisit it.
+	//
+	// TODO(sumeer): We should be able to set the term to
 	// nonemptySnap.Metadata.Term. See
 	// https://github.com/cockroachdb/cockroach/pull/75675#pullrequestreview-867926687
 	// for a discussion regarding this.
-	r.shMu.lastTermNotDurable = invalidLastTerm
-	r.shMu.raftLogSize = 0
+	r.asLogStorage().updateStateRaftMuLockedMuLocked(logstore.RaftState{
+		LastIndex: state.RaftAppliedIndex,
+		LastTerm:  invalidLastTerm,
+		ByteSize:  0, // the log is now empty
+	})
+
 	// Update the store stats for the data in the snapshot.
 	r.store.metrics.subtractMVCCStats(ctx, r.tenantMetricsRef, *r.shMu.state.Stats)
 	r.store.metrics.addMVCCStats(ctx, r.tenantMetricsRef, *state.Stats)

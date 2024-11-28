@@ -890,13 +890,10 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	replicaStateInfoMap := r.raftMu.replicaStateScratchForFlowControl
 	var raftNodeBasicState replica_rac2.RaftNodeBasicState
 	var logSnapshot raft.LogSnapshot
+	state := r.asLogStorage().stateRaftMuLocked() // used for append below
+
 	r.mu.Lock()
 	rac2ModeForReady := r.mu.currentRACv2Mode
-	state := logstore.RaftState{ // used for append below
-		LastIndex: r.shMu.lastIndexNotDurable,
-		LastTerm:  r.shMu.lastTermNotDurable,
-		ByteSize:  r.shMu.raftLogSize,
-	}
 	leaderID := r.mu.leaderID
 	lastLeaderID := leaderID
 	err := r.withRaftGroupLocked(func(raftGroup *raft.RawNode) (bool, error) {
@@ -1056,8 +1053,6 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	refreshReason := noReason
 	if hasMsg(msgStorageAppend) {
 		app := logstore.MakeMsgStorageAppend(msgStorageAppend)
-		cb := (*replicaSyncCallback)(r)
-
 		// Leadership changes, if any, are communicated through MsgStorageAppends.
 		// Check if that's the case here.
 		if hs := app.HardState(); !raft.IsEmptyHardState(hs) && leaderID != roachpb.ReplicaID(hs.Lead) {
@@ -1132,14 +1127,14 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 			stats.tSnapEnd = crtime.NowMono()
 			stats.snap.applied = true
 
-			// lastIndexNotDurable, lastTermNotDurable and raftLogSize were updated in
-			// applySnapshot, but we also want to make sure we reflect these changes
-			// in the local variables we're tracking here.
-			state = logstore.RaftState{
-				LastIndex: r.shMu.lastIndexNotDurable,
-				LastTerm:  r.shMu.lastTermNotDurable,
-				ByteSize:  r.shMu.raftLogSize,
-			}
+			// Last index/term, and the raft log size were updated in applySnapshot,
+			// but we also want to make sure we reflect these changes in the state
+			// variable here.
+			//
+			// TODO(pav-kv): we actually don't need this state any longer. The only
+			// reason to load it here is that there is an unconditional update in the
+			// next Replica.mu section below. Consider avoiding this double update.
+			state = r.asLogStorage().stateRaftMuLocked()
 
 			// We refresh pending commands after applying a snapshot because this
 			// replica may have been temporarily partitioned from the Raft group and
@@ -1152,7 +1147,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 				refreshReason = reasonSnapshotApplied
 			}
 
-			cb.OnSnapSync(ctx, app.OnDone())
+			(*replicaSyncCallback)(r).OnSnapSync(ctx, app.OnDone())
 		} else {
 			// TODO(pavelkalinnikov): find a way to move it to storeEntries.
 			if app.Commit != 0 && !r.IsInitialized() {
@@ -1178,9 +1173,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 			}
 
 			r.mu.raftTracer.MaybeTrace(msgStorageAppend)
-			if state, err = r.raftMu.logStorage.StoreEntries(
-				ctx, state, app, cb, &stats.append,
-			); err != nil {
+			if state, err = r.asLogStorage().appendRaftMuLocked(ctx, app, &stats.append); err != nil {
 				return stats, errors.Wrap(err, "while storing log entries")
 			}
 		}
@@ -1189,10 +1182,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	// Update protected state - last index, last term, raft log size, and raft
 	// leader ID.
 	r.mu.Lock()
-	// TODO(pavelkalinnikov): put logstore.RaftState to r.mu directly.
-	r.shMu.lastIndexNotDurable = state.LastIndex
-	r.shMu.lastTermNotDurable = state.LastTerm
-	r.shMu.raftLogSize = state.ByteSize
+	r.asLogStorage().updateStateRaftMuLockedMuLocked(state)
 	var becameLeader bool
 	if r.mu.leaderID != leaderID {
 		r.mu.leaderID = leaderID

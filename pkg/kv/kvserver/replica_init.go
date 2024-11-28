@@ -307,8 +307,15 @@ func (r *Replica) initRaftMuLockedReplicaMuLocked(s kvstorage.LoadedReplicaState
 
 	r.shMu.state = s.ReplState
 	r.shMu.raftTruncState = s.TruncState
-	r.shMu.lastIndexNotDurable = s.LastIndex
-	r.shMu.lastTermNotDurable = invalidLastTerm
+	r.asLogStorage().updateStateRaftMuLockedMuLocked(logstore.RaftState{
+		LastIndex: s.LastIndex,
+		// TODO(#136296): we should be able to load the last entry term cheaply.
+		LastTerm: invalidLastTerm,
+		// Do not mutate the log size, just in case. NB: it is probably zero here.
+		// TODO(#136358): we should be able to load the log size. Currently, it is
+		// imprecise/zero when Replica is loaded.
+		ByteSize: r.shMu.raftLogSize,
+	})
 
 	// Initialize the Raft group. This may replace a Raft group that was installed
 	// for the uninitialized replica to process Raft requests or snapshots.
