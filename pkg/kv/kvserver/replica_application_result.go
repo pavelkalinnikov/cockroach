@@ -505,14 +505,16 @@ func (r *Replica) handleTruncatedStateResult(
 	// to and including the most recently truncated index.
 	r.store.raftEntryCache.Clear(r.RangeID, t.Index+1)
 
-	// Truncate the sideloaded storage. This is safe only if the new truncated
-	// state is durably stored on disk, i.e. synced.
-	// TODO(#38566, #113135): this is unfortunately not true, need to fix this.
-	//
-	// TODO(sumeer): once we remove the legacy caller of
-	// handleTruncatedStateResult, stop calculating the size of the removed
-	// files and the remaining files.
+	// Truncate the sideloaded storage. This is safe because the new truncated
+	// state is synced. If it wasn't, a crash right after removing the sideloaded
+	// entries could result in missing entries in the log.
 	log.Eventf(ctx, "truncating sideloaded storage up to (and including) index %d", t.Index)
+	// TODO(#93248): when the legacy caller of handleTruncatedStateResult is
+	// removed, stop calculating the size of the removed files.
+	// TODO(pav-kv): TruncateTo can end up removing leftover files that were
+	// previously compacted out of the log. We don't clean up the leftover files
+	// at start up. So the size computation here can return a larger delta and
+	// lead to inconsistent raft log size tracking.
 	size, _, err := r.raftMu.sideloaded.TruncateTo(ctx, t.Index+1)
 	if err != nil {
 		// We don't *have* to remove these entries for correctness. Log a
@@ -520,13 +522,11 @@ func (r *Replica) handleTruncatedStateResult(
 		log.Errorf(ctx, "while removing sideloaded files during log truncation: %+v", err)
 	}
 	// NB: we don't sync the sideloaded entry files removal here for performance
-	// reasons. If a crash occurs, and these files get recovered after a restart,
-	// we should clean them up on the server startup.
+	// reasons.
 	//
-	// TODO(#113135): this removal survives process crashes though, and system
-	// crashes if the filesystem is quick enough to sync it for us. Add a test
-	// that syncs the files removal here, and "crashes" right after, to help
-	// reproduce and fix #113135.
+	// TODO(pav-kv): If a crash occurs between syncing the truncated state and the
+	// TruncateTo removing the files, there will be dangling files at the next
+	// start. We should clean them up at startup.
 	return -size, expectedFirstIndexWasAccurate
 }
 
