@@ -491,25 +491,35 @@ func (r *Replica) handleLeaseResult(
 
 // handleTruncatedStateResult is a post-apply handler for the raft log
 // truncation command. It updates the in-memory state of the Replica with the
-// new RaftTruncatedState, and removes obsolete entries from the raft log cache
-// and sideloaded storage.
+// new RaftTruncatedState and log size delta, and removes obsolete entries from
+// the raft log cache and sideloaded storage.
 //
-// The truncation is finalized by the handleRaftLogDeltaResult method below,
-// which also updates the raft log size with the computed delta. The reason for
-// having two separate methods is that the handling is different between the
-// tightly and loosely coupled truncation stacks. The latter computes the log
-// size delta when planning the truncation, while the former only has a partial
-// delta and needs to add the sideloaded files to it.
+// The sideloadIncluded flag specifies whether the raftLogDelta already includes
+// the total size of the sideloaded entries. It is true in loosely coupled
+// truncations stack, and false in the tightly coupled stack. The latter will
+// eventually be removed.
 //
-// TODO(pav-kv): this can be simplified.
+// The isDeltaTrusted flag specifies whether the raftLogDelta has been correctly
+// computed. The loosely coupled truncations stack sets it to false if, for
+// example, it failed to account for the sideloaded entries. The tightly coupled
+// truncations have correct stats (but excluding the sideloaded entries).
+//
+// TODO(pav-kv): this can be simplified further.
 func (r *Replica) handleTruncatedStateResult(
 	ctx context.Context,
 	t *kvserverpb.RaftTruncatedState,
 	expectedFirstIndexPreTruncation kvpb.RaftIndex,
-) (raftLogDelta int64, expectedFirstIndexWasAccurate bool) {
+	raftLogDelta int64,
+	sideloadIncluded bool,
+	isDeltaTrusted bool,
+) {
 	r.raftMu.AssertHeld()
-	expectedFirstIndexWasAccurate =
+	// TODO(pav-kv): add unit tests for this logic.
+	expectedFirstIndexWasAccurate :=
 		r.shMu.raftTruncState.Index+1 == expectedFirstIndexPreTruncation
+	isRaftLogTruncationDeltaTrusted := isDeltaTrusted &&
+		(expectedFirstIndexWasAccurate || expectedFirstIndexPreTruncation == 0)
+
 	r.mu.Lock()
 	r.shMu.raftTruncState = *t
 	r.mu.Unlock()
@@ -540,9 +550,14 @@ func (r *Replica) handleTruncatedStateResult(
 	// TODO(pav-kv): If a crash occurs between syncing the truncated state and the
 	// TruncateTo removing the files, there will be dangling files at the next
 	// start. We should clean them up at startup.
-	return -size, expectedFirstIndexWasAccurate
+
+	if !sideloadIncluded {
+		raftLogDelta -= size
+	}
+	r.handleRaftLogDeltaResult(raftLogDelta, isRaftLogTruncationDeltaTrusted)
 }
 
+// TODO(pav-kv): consolidate with other truncated state updates.
 func (r *Replica) handleRaftLogDeltaResult(delta int64, isDeltaTrusted bool) {
 	r.raftMu.AssertHeld()
 	r.mu.Lock()
