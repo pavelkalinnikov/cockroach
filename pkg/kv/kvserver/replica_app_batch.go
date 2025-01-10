@@ -38,7 +38,9 @@ type replicaAppBatch struct {
 	applyStats *applyCommittedEntriesStats
 
 	// batch accumulates writes implied by the raft entries in this batch.
-	batch storage.Batch
+	batch    storage.Batch
+	logBatch storage.Batch
+
 	// state is this batch's view of the replica's state. It is copied from
 	// under the Replica.mu when the batch is initialized and is updated in
 	// stageTrivialReplicatedEvalResult.
@@ -307,7 +309,7 @@ func (b *replicaAppBatch) runPostAddTriggersReplicaOnly(
 		//
 		// Alternatively if we discover that the RHS has already been removed
 		// from this store, clean up its data.
-		splitPreApply(ctx, b.r, b.batch, res.Split.SplitTrigger, cmd.Cmd.ClosedTimestamp)
+		splitPreApply(ctx, b.r, b.batch, b.logBatch, res.Split.SplitTrigger, cmd.Cmd.ClosedTimestamp)
 
 		// The rangefeed processor will no longer be provided logical ops for
 		// its entire range, so it needs to be shut down and all registrations
@@ -629,9 +631,17 @@ func (b *replicaAppBatch) ApplyToStateMachine(ctx context.Context) error {
 	// asynchronously when sure that the state machine engine has synced the
 	// application of this command. I.e. the loosely coupled truncation migration
 	// mentioned above likely needs to be done first.
-	sync := b.changeRemovesReplica || b.changeTruncatesSideloadedFiles
-	if err := b.batch.Commit(sync); err != nil {
-		return errors.Wrapf(err, "unable to commit Raft entry batch")
+	if !b.logBatch.Empty() {
+		sync := b.changeRemovesReplica || b.changeTruncatesSideloadedFiles
+		if err := b.logBatch.Commit(sync); err != nil {
+			return errors.Wrapf(err, "unable to commit log storage batch")
+		}
+		b.logBatch.Close()
+		b.logBatch = nil
+	}
+	// FIXME(pav-kv): unsafe code, engines must be synced appropriately.
+	if err := b.batch.Commit(false /* sync */); err != nil {
+		return errors.Wrapf(err, "unable to commit state machine batch")
 	}
 	b.batch.Close()
 	b.batch = nil

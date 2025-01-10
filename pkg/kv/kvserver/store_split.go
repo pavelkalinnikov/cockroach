@@ -31,6 +31,7 @@ func splitPreApply(
 	ctx context.Context,
 	r *Replica,
 	readWriter storage.ReadWriter,
+	logRW storage.ReadWriter,
 	split roachpb.SplitTrigger,
 	initClosedTS *hlc.Timestamp,
 ) {
@@ -84,11 +85,12 @@ func splitPreApply(
 				log.Fatalf(ctx, "unexpectedly found initialized newer RHS of split: %v", rightRepl.Desc())
 			}
 			var err error
-			hs, err = rightRepl.raftMu.stateLoader.LoadHardState(ctx, readWriter)
+			hs, err = rightRepl.raftMu.stateLoader.LoadHardState(ctx, logRW)
 			if err != nil {
 				log.Fatalf(ctx, "failed to load hard state for removed rhs: %v", err)
 			}
 		}
+		// FIXME(pav-kv): unsafe code, engines must be synced appropriately.
 		if err := kvstorage.ClearRangeData(ctx, split.RightDesc.RangeID, readWriter, readWriter, kvstorage.ClearRangeDataOptions{
 			// We know there isn't anything in these two replicated spans below in the
 			// right-hand side (before the current batch), so setting these options
@@ -96,6 +98,10 @@ func splitPreApply(
 			// staged in this batch, which is what we're after.
 			ClearReplicatedBySpan:    split.RightDesc.RSpan(),
 			ClearReplicatedByRangeID: true,
+		}); err != nil {
+			log.Fatalf(ctx, "failed to clear range data for removed rhs: %v", err)
+		}
+		if err := kvstorage.ClearRangeData(ctx, split.RightDesc.RangeID, logRW, readWriter, kvstorage.ClearRangeDataOptions{
 			// See the HardState write-back dance above and below.
 			//
 			// TODO(tbg): we don't actually want to touch the raft state of the right
@@ -119,11 +125,11 @@ func splitPreApply(
 			// Cleared the HardState and RaftReplicaID, so rewrite them to the current
 			// values. NB: rightRepl.raftMu is still locked since HardState was read,
 			// so it can't have been rewritten in the meantime (fixed in #75918).
-			if err := rightRepl.raftMu.stateLoader.SetHardState(ctx, readWriter, hs); err != nil {
+			if err := rightRepl.raftMu.stateLoader.SetHardState(ctx, logRW, hs); err != nil {
 				log.Fatalf(ctx, "failed to set hard state with 0 commit index for removed rhs: %v", err)
 			}
 			if err := rightRepl.raftMu.stateLoader.SetRaftReplicaID(
-				ctx, readWriter, rightRepl.ReplicaID()); err != nil {
+				ctx, logRW, rightRepl.ReplicaID()); err != nil {
 				log.Fatalf(ctx, "failed to set RaftReplicaID for removed rhs: %v", err)
 			}
 		}
