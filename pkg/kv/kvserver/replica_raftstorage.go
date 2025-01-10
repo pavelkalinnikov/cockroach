@@ -924,6 +924,8 @@ func clearSubsumedReplicaDiskData(
 			UnreplicatedByRangeID: opts.ClearUnreplicatedByRangeID,
 		})
 		clearedSpans = append(clearedSpans, subsumedClearedSpans...)
+		// FIXME(pav-kv): this is the last DestroyReplica user, and it's not correct
+		// with separate engines.
 		if err := kvstorage.DestroyReplica(ctx, subDesc.RangeID, reader, &subsumedReplSST, subsumedNextReplicaID, opts); err != nil {
 			subsumedReplSST.Close()
 			return nil, err

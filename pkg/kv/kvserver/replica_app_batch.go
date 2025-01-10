@@ -355,10 +355,13 @@ func (b *replicaAppBatch) runPostAddTriggersReplicaOnly(
 		// required for correctness, since the merge protocol should guarantee that
 		// no new replicas of the RHS can ever be created, but it doesn't hurt to
 		// be careful.
-		if err := kvstorage.DestroyReplica(ctx, rhsRepl.RangeID, b.batch, b.batch, mergedTombstoneReplicaID, kvstorage.ClearRangeDataOptions{
-			ClearReplicatedByRangeID:   true,
-			ClearUnreplicatedByRangeID: true,
-		}); err != nil {
+		if err := kvstorage.DestroyReplicaExt(ctx, rhsRepl.RangeID,
+			b.batch, b.logBatch, mergedTombstoneReplicaID,
+			kvstorage.ClearRangeDataOptions{
+				ClearReplicatedByRangeID:   true,
+				ClearUnreplicatedByRangeID: true,
+			},
+		); err != nil {
 			return errors.Wrapf(err, "unable to destroy replica before merge")
 		}
 
@@ -431,7 +434,7 @@ func (b *replicaAppBatch) runPostAddTriggersReplicaOnly(
 		if apply {
 			if apply, err = handleTruncatedStateBelowRaftPreApply(
 				ctx, b.truncState, truncatedState,
-				b.r.raftMu.stateLoader.StateLoader, b.batch,
+				b.r.raftMu.stateLoader.StateLoader, b.logBatch,
 			); err != nil {
 				return errors.Wrap(err, "unable to handle truncated state")
 			}
@@ -518,11 +521,14 @@ func (b *replicaAppBatch) runPostAddTriggersReplicaOnly(
 		// We've set the replica's in-mem status to reflect the pending destruction
 		// above, and preDestroyRaftMuLocked will also add a range tombstone to the
 		// batch, so that when we commit it, the removal is finalized.
-		if err := kvstorage.DestroyReplica(ctx, b.r.RangeID, b.batch, b.batch, change.NextReplicaID(), kvstorage.ClearRangeDataOptions{
-			ClearReplicatedBySpan:      span,
-			ClearReplicatedByRangeID:   true,
-			ClearUnreplicatedByRangeID: true,
-		}); err != nil {
+		if err := kvstorage.DestroyReplicaExt(ctx, b.r.RangeID, b.batch, b.logBatch,
+			change.NextReplicaID(),
+			kvstorage.ClearRangeDataOptions{
+				ClearReplicatedBySpan:      span,
+				ClearReplicatedByRangeID:   true,
+				ClearUnreplicatedByRangeID: true,
+			},
+		); err != nil {
 			return errors.Wrapf(err, "unable to destroy replica before removal")
 		}
 	}

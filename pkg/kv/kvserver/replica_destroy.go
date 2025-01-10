@@ -104,8 +104,10 @@ func (r *Replica) destroyRaftMuLocked(ctx context.Context, nextReplicaID roachpb
 	startTime := timeutil.Now()
 
 	ms := r.GetMVCCStats()
-	batch := r.store.TODOEngine().NewWriteBatch()
+	batch := r.store.StateEngine().NewBatch()
 	defer batch.Close()
+	logBatch := r.store.LogEngine().NewBatch()
+	defer logBatch.Close()
 	desc := r.Desc()
 	inited := desc.IsInitialized()
 
@@ -120,7 +122,7 @@ func (r *Replica) destroyRaftMuLocked(ctx context.Context, nextReplicaID roachpb
 		ClearUnreplicatedByRangeID: true,
 	}
 	// TODO(sep-raft-log): need both engines separately here.
-	if err := kvstorage.DestroyReplica(ctx, r.RangeID, r.store.TODOEngine(), batch, nextReplicaID, opts); err != nil {
+	if err := kvstorage.DestroyReplicaExt(ctx, r.RangeID, batch, logBatch, nextReplicaID, opts); err != nil {
 		return err
 	}
 	preTime := timeutil.Now()
@@ -130,7 +132,10 @@ func (r *Replica) destroyRaftMuLocked(ctx context.Context, nextReplicaID roachpb
 	// a synchronous batch first and then delete the data alternatively, but
 	// then need to handle the case in which there is both the tombstone and
 	// leftover replica data.
-	if err := batch.Commit(true); err != nil {
+	if err := logBatch.Commit(true); err != nil {
+		return err
+	}
+	if err := batch.Commit(false); err != nil {
 		return err
 	}
 	commitTime := timeutil.Now()

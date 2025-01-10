@@ -150,3 +150,25 @@ func DestroyReplica(
 	return storage.MVCCBlindPutProto(ctx, writer, tombstoneKey,
 		hlc.Timestamp{}, &tombstone, storage.MVCCWriteOptions{})
 }
+
+func DestroyReplicaExt(
+	ctx context.Context,
+	rangeID roachpb.RangeID,
+	state, log storage.Batch,
+	nextReplicaID roachpb.ReplicaID,
+	opts ClearRangeDataOptions,
+) error {
+	subOpts := opts
+	subOpts.ClearUnreplicatedByRangeID = false
+	if err := DestroyReplica(ctx, rangeID, state, state, nextReplicaID, subOpts); err != nil {
+		return errors.Wrapf(err, "unable to destroy replica state machine")
+	}
+	// FIXME(pav-kv): unsafe code, engines must be synced appropriately.
+	subOpts = opts
+	subOpts.ClearReplicatedByRangeID = false
+	subOpts.ClearReplicatedBySpan = roachpb.RSpan{}
+	if err := DestroyReplica(ctx, rangeID, log, log, nextReplicaID, subOpts); err != nil {
+		return errors.Wrapf(err, "unable to destroy replica log storage")
+	}
+	return nil
+}
