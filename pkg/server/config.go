@@ -880,9 +880,30 @@ func (cfg *Config) CreateEngines(ctx context.Context) (Engines, error) {
 				}))
 			}
 		}
-		eng, err := storage.Open(ctx, storeEnvs[i], cfg.Settings, storageConfigOpts...)
+		var eng storage.Engine
+		eng, err = storage.Open(ctx, storeEnvs[i], cfg.Settings, storageConfigOpts...)
 		if err != nil {
 			return Engines{}, err
+		}
+
+		smPath := envutil.EnvOrDefaultString("COCKROACH_STATE_ENGINE_PATH", "")
+		if smPath != "" {
+			if len(cfg.Stores.Specs) != 1 {
+				// TODO(pav-kv): support
+				panic("separate engines not supported for multi-store")
+			}
+			spec := spec
+			spec.Path = smPath
+			env, err := fs.InitEnvFromStoreSpec(ctx, spec, fs.ReadWrite, stickyRegistry, cfg.DiskWriteStats)
+			if err != nil {
+				return Engines{}, err
+			}
+			smEng, err := storage.Open(ctx, env, cfg.Settings, smStorageConfigOpts...)
+			if err != nil {
+				return Engines{}, err
+			}
+			detail(redact.Sprintf("store %d: state machine engine %+v", i, smEng.Properties()))
+			eng = &sepEngine{Engine: eng, smEng: smEng}
 		}
 		// Nil out the store env; the engine has taken responsibility for Closing
 		// it.
