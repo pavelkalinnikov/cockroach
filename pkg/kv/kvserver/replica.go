@@ -1771,19 +1771,17 @@ func (r *Replica) State(ctx context.Context) kvserverpb.RangeInfo {
 // assertStateRaftMuLockedReplicaMuRLocked can be called from the Raft goroutine
 // to check that the in-memory and on-disk states of the Replica are congruent.
 // Requires that r.raftMu is locked and r.mu is read locked.
-func (r *Replica) assertStateRaftMuLockedReplicaMuRLocked(
-	ctx context.Context, reader storage.Reader,
-) {
+func (r *Replica) assertStateRaftMuLockedReplicaMuRLocked(ctx context.Context) {
 	if ts := r.shMu.state.TruncatedState; ts != nil {
 		log.Fatalf(ctx, "non-empty RaftTruncatedState in ReplicaState: %+v", ts)
-	} else if loaded, err := r.mu.stateLoader.LoadRaftTruncatedState(ctx, reader); err != nil {
+	} else if loaded, err := r.mu.stateLoader.LoadRaftTruncatedState(ctx, r.store.LogEngine()); err != nil {
 		log.Fatalf(ctx, "%s", err)
 	} else if ts := r.shMu.raftTruncState; loaded != ts {
 		log.Fatalf(ctx, "on-disk and in-memory RaftTruncatedState diverged: %s",
 			redact.Safe(pretty.Diff(loaded, ts)))
 	}
 
-	diskState, err := r.mu.stateLoader.Load(ctx, reader, r.shMu.state.Desc)
+	diskState, err := r.mu.stateLoader.Load(ctx, r.store.StateEngine(), r.shMu.state.Desc)
 	if err != nil {
 		log.Fatalf(ctx, "%v", err)
 	}
@@ -1840,7 +1838,7 @@ func (r *Replica) assertStateRaftMuLockedReplicaMuRLocked(
 			log.Fatalf(ctx, "replica's replicaID %d diverges from descriptor %+v", r.replicaID, r.shMu.state.Desc)
 		}
 	}
-	diskReplID, err := r.mu.stateLoader.LoadRaftReplicaID(ctx, reader)
+	diskReplID, err := r.mu.stateLoader.LoadRaftReplicaID(ctx, r.store.LogEngine())
 	if err != nil {
 		log.Fatalf(ctx, "%s", err)
 	}

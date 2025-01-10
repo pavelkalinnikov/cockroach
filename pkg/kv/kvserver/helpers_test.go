@@ -311,12 +311,12 @@ func (r *Replica) Breaker() *circuit.Breaker {
 	return r.breaker.wrapped
 }
 
-func (r *Replica) AssertState(ctx context.Context, reader storage.Reader) {
+func (r *Replica) AssertState(ctx context.Context) {
 	r.raftMu.Lock()
 	defer r.raftMu.Unlock()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	r.assertStateRaftMuLockedReplicaMuRLocked(ctx, reader)
+	r.assertStateRaftMuLockedReplicaMuRLocked(ctx)
 }
 
 func (r *Replica) RaftLock() {
