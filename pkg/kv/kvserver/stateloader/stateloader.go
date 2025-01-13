@@ -404,5 +404,6 @@ func (rsl StateLoader) SynthesizeRaftState(
 	if err != nil {
 		return err
 	}
-	return rsl.SynthesizeHardState(ctx, readWriter, hs, truncState, as.RaftAppliedIndex)
+	return rsl.SynthesizeHardState(ctx, readWriter, hs, truncState,
+		as.RaftAppliedIndex, as.RaftAppliedIndexTerm)
 }

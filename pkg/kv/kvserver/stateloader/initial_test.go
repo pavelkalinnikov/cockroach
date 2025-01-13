@@ -64,7 +64,8 @@ func TestSynthesizeHardState(t *testing.T) {
 			}
 
 			err = rsl.SynthesizeHardState(
-				context.Background(), batch, oldHS, kvserverpb.RaftTruncatedState{Term: test.TruncTerm}, test.RaftAppliedIndex,
+				context.Background(), batch, oldHS, kvserverpb.RaftTruncatedState{Term: test.TruncTerm},
+				test.RaftAppliedIndex, 0, // FIXME: RaftAppliedTerm
 			)
 			if !testutils.IsError(err, test.Err) {
 				t.Fatalf("%d: expected %q got %v", i, test.Err, err)
