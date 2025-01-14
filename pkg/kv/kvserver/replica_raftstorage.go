@@ -528,18 +528,29 @@ func (r *Replica) applySnapshot(
 	}(timeutil.Now())
 
 	clearedSpans := inSnap.clearedSpans
-	unreplicatedSSTFile, clearedSpan, err := writeUnreplicatedSST(
-		ctx, r.ID(), r.ClusterSettings(), nonemptySnap.Metadata, hs, &r.raftMu.stateLoader.StateLoader,
-	)
+	// unreplicatedSSTFile, clearedSpan, err := writeUnreplicatedSST(
+	// 	ctx, r.ID(), r.ClusterSettings(), nonemptySnap.Metadata, hs, &r.raftMu.stateLoader.StateLoader,
+	// )
+	logBatch := r.store.LogEngine().NewWriteBatch()
+	clearedSpan, err := rewriteRaftState(ctx, r.ID(), hs, kvserverpb.RaftTruncatedState{
+		Index: kvpb.RaftIndex(nonemptySnap.Metadata.Index),
+		Term:  kvpb.RaftTerm(nonemptySnap.Metadata.Term),
+	}, &r.raftMu.stateLoader.StateLoader, logBatch)
 	if err != nil {
 		return err
 	}
+	if len(subsumedRepls) > 0 {
+		// Merges should be disabled to avoid hitting this.
+		log.Fatalf(ctx, "subsuming replicas during snapshot under separate raft log is unimplemented, "+
+			"see https://github.com/cockroachdb/cockroach/issues/97609")
+	}
+
 	clearedSpans = append(clearedSpans, clearedSpan)
 	// TODO(itsbilal): Write to SST directly in unreplicatedSST rather than
 	// buffering in a MemObject first.
-	if err := inSnap.SSTStorageScratch.WriteSST(ctx, unreplicatedSSTFile.Data()); err != nil {
-		return err
-	}
+	// if err := inSnap.SSTStorageScratch.WriteSST(ctx, unreplicatedSSTFile.Data()); err != nil {
+	// 	return err
+	// }
 	// Update Raft entries.
 	r.store.raftEntryCache.Drop(r.RangeID)
 
@@ -645,6 +656,13 @@ func (r *Replica) applySnapshot(
 			writeBytes = uint64(inSnap.SSTSize)
 		}
 	}
+
+	// NB: no need to sync the log storage here. We should be able to recover
+	// after crashes.
+	if err := logBatch.Commit(false /* sync */); err != nil {
+		return err
+	}
+
 	// The "ignored" here is to ignore the writes to create the AC linear models
 	// for LSM writes. Since these writes typically correspond to actual writes
 	// onto the disk, we account for them separately in
