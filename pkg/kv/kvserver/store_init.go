@@ -145,10 +145,10 @@ func WriteInitialClusterData(
 		batch := eng.NewBatch()
 		stateBatch := batch
 		if sepEng, ok := eng.(SeparatedEngine); ok {
-			batch = sepEng.SMEngine().NewBatch()
-			defer batch.Close()
+			stateBatch = sepEng.SMEngine().NewBatch()
+			defer stateBatch.Close()
 		}
-		defer stateBatch.Close()
+		defer batch.Close()
 
 		now := hlc.Timestamp{
 			WallTime: nowNanos,
@@ -223,11 +223,14 @@ func WriteInitialClusterData(
 		}
 
 		sl := stateloader.Make(rangeID)
-		if err := sl.SetMVCCStats(ctx, batch, &computedStats); err != nil {
+		if err := sl.SetMVCCStats(ctx, stateBatch, &computedStats); err != nil {
 			return err
 		}
 
 		if err := batch.Commit(true /* sync */); err != nil {
+			return err
+		}
+		if err := stateBatch.Commit(true /* sync */); err != nil {
 			return err
 		}
 	}
