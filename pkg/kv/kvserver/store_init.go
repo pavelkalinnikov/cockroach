@@ -143,7 +143,12 @@ func WriteInitialClusterData(
 			ctx, 2, "creating range %d [%s, %s). Initial values: %d",
 			desc.RangeID, desc.StartKey, desc.EndKey, len(rangeInitialValues))
 		batch := eng.NewBatch()
-		defer batch.Close()
+		stateBatch := batch
+		if sepEng, ok := eng.(SeparatedEngine); ok {
+			batch = sepEng.SMEngine().NewBatch()
+			defer batch.Close()
+		}
+		defer stateBatch.Close()
 
 		now := hlc.Timestamp{
 			WallTime: nowNanos,
@@ -208,7 +213,8 @@ func WriteInitialClusterData(
 		}
 
 		if err := stateloader.WriteInitialRangeState(
-			ctx, batch, *desc, firstReplicaID, initialReplicaVersion); err != nil {
+			ctx, stateBatch, batch, *desc, firstReplicaID, initialReplicaVersion,
+		); err != nil {
 			return err
 		}
 		computedStats, err := rditer.ComputeStatsForRange(ctx, desc, batch, now.WallTime)

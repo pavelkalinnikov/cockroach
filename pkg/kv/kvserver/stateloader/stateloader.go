@@ -390,7 +390,7 @@ func UninitializedReplicaState(rangeID roachpb.RangeID) kvserverpb.ReplicaState 
 // WriteInitialReplicaState and, on a split, perhaps the activity of an
 // uninitialized Raft group)
 func (rsl StateLoader) SynthesizeRaftState(
-	ctx context.Context, readWriter storage.ReadWriter,
+	ctx context.Context, readWriter storage.ReadWriter, stateReader storage.Reader,
 ) error {
 	hs, err := rsl.LoadHardState(ctx, readWriter)
 	if err != nil {
@@ -400,7 +400,7 @@ func (rsl StateLoader) SynthesizeRaftState(
 	if err != nil {
 		return err
 	}
-	as, err := rsl.LoadRangeAppliedState(ctx, readWriter)
+	as, err := rsl.LoadRangeAppliedState(ctx, stateReader)
 	if err != nil {
 		return err
 	}

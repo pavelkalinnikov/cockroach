@@ -140,7 +140,7 @@ func splitPreApply(
 	// replica is initialized (combining it with existing or default
 	// Term and Vote). This is the common case.
 	rsl := stateloader.Make(split.RightDesc.RangeID)
-	if err := rsl.SynthesizeRaftState(ctx, readWriter); err != nil {
+	if err := rsl.SynthesizeRaftState(ctx, logRW, readWriter); err != nil {
 		log.Fatalf(ctx, "%v", err)
 	}
 	// Write the RaftReplicaID for the RHS to maintain the invariant that any
