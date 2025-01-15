@@ -209,7 +209,7 @@ func applyReplicaUpdate(
 	}
 
 	sl := stateloader.Make(localDesc.RangeID)
-	ms, err := sl.LoadMVCCStats(ctx, readWriter)
+	ms, err := sl.LoadMVCCStats(ctx, stateloader.SMReader{}) // FIXME
 	if err != nil {
 		return PrepareReplicaReport{}, errors.Wrap(err, "loading MVCCStats")
 	}
@@ -304,7 +304,7 @@ func applyReplicaUpdate(
 	}
 
 	// Refresh stats
-	if err := sl.SetMVCCStats(ctx, readWriter, &ms); err != nil {
+	if err := sl.SetMVCCStats(ctx, stateloader.SMReadWriter{}, &ms); err != nil { // FIXME
 		return PrepareReplicaReport{}, errors.Wrap(err, "updating MVCCStats")
 	}
 

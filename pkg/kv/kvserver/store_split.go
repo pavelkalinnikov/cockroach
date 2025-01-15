@@ -140,7 +140,7 @@ func splitPreApply(
 	// replica is initialized (combining it with existing or default
 	// Term and Vote). This is the common case.
 	rsl := stateloader.Make(split.RightDesc.RangeID)
-	if err := rsl.SynthesizeRaftState(ctx, logRW, readWriter); err != nil {
+	if err := rsl.SynthesizeRaftState(ctx, logRW, stateloader.SMReader{Reader: readWriter}); err != nil {
 		log.Fatalf(ctx, "%v", err)
 	}
 	// Write the RaftReplicaID for the RHS to maintain the invariant that any
@@ -163,7 +163,7 @@ func splitPreApply(
 		initClosedTS = &hlc.Timestamp{}
 	}
 	initClosedTS.Forward(r.GetCurrentClosedTimestamp(ctx))
-	if err := rsl.SetClosedTimestamp(ctx, readWriter, *initClosedTS); err != nil {
+	if err := rsl.SetClosedTimestamp(ctx, stateloader.SMReadWriter{ReadWriter: readWriter}, *initClosedTS); err != nil {
 		log.Fatalf(ctx, "%s", err)
 	}
 }
@@ -246,7 +246,7 @@ func prepareRightReplicaForSplit(
 	// Finish initialization of the RHS replica.
 
 	state, err := kvstorage.LoadReplicaState(
-		ctx, r.store.TODOEngine(), r.StoreID(), &split.RightDesc, rightRepl.replicaID)
+		ctx, r.store.LogEngine(), stateloader.SMReader{Reader: r.store.StateEngine()}, r.StoreID(), &split.RightDesc, rightRepl.replicaID)
 	if err != nil {
 		log.Fatalf(ctx, "%v", err)
 	}

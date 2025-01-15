@@ -35,7 +35,7 @@ const (
 // are returned.
 func WriteInitialReplicaState(
 	ctx context.Context,
-	stateRW storage.ReadWriter,
+	stateRW SMReadWriter,
 	ms enginepb.MVCCStats,
 	desc roachpb.RangeDescriptor,
 	lease roachpb.Lease,
@@ -59,25 +59,25 @@ func WriteInitialReplicaState(
 	}
 
 	rsl := Make(desc.RangeID)
-	if existingLease, err := rsl.LoadLease(ctx, stateRW); err != nil {
+	if existingLease, err := rsl.LoadLease(ctx, stateRW.Reader()); err != nil {
 		return enginepb.MVCCStats{}, errors.Wrap(err, "error reading lease")
 	} else if (existingLease != roachpb.Lease{}) {
 		log.Fatalf(ctx, "expected trivial lease, but found %+v", existingLease)
 	}
 
-	if existingGCThreshold, err := rsl.LoadGCThreshold(ctx, stateRW); err != nil {
+	if existingGCThreshold, err := rsl.LoadGCThreshold(ctx, stateRW.Reader()); err != nil {
 		return enginepb.MVCCStats{}, errors.Wrap(err, "error reading GCThreshold")
 	} else if !existingGCThreshold.IsEmpty() {
 		log.Fatalf(ctx, "expected trivial GCthreshold, but found %+v", existingGCThreshold)
 	}
 
-	if existingGCHint, err := rsl.LoadGCHint(ctx, stateRW); err != nil {
+	if existingGCHint, err := rsl.LoadGCHint(ctx, stateRW.Reader()); err != nil {
 		return enginepb.MVCCStats{}, errors.Wrap(err, "error reading GCHint")
 	} else if !existingGCHint.IsEmpty() {
 		return enginepb.MVCCStats{}, errors.AssertionFailedf("expected trivial GCHint, but found %+v", existingGCHint)
 	}
 
-	if existingVersion, err := rsl.LoadVersion(ctx, stateRW); err != nil {
+	if existingVersion, err := rsl.LoadVersion(ctx, stateRW.Reader()); err != nil {
 		return enginepb.MVCCStats{}, errors.Wrap(err, "error reading Version")
 	} else if (existingVersion != roachpb.Version{}) {
 		log.Fatalf(ctx, "expected trivial version, but found %+v", existingVersion)
@@ -90,7 +90,7 @@ func WriteInitialReplicaState(
 // bootstrap.
 func WriteInitialRangeState(
 	ctx context.Context,
-	stateRW storage.ReadWriter,
+	stateRW SMReadWriter,
 	logRW storage.ReadWriter,
 	desc roachpb.RangeDescriptor,
 	replicaID roachpb.ReplicaID,
@@ -111,7 +111,7 @@ func WriteInitialRangeState(
 	// TODO(sep-raft-log): when the log storage is separated, the below can't be
 	// written in the same batch. Figure out the ordering required here.
 	sl := Make(desc.RangeID)
-	if err := sl.SynthesizeRaftState(ctx, logRW, stateRW); err != nil {
+	if err := sl.SynthesizeRaftState(ctx, logRW, stateRW.Reader()); err != nil {
 		return err
 	}
 	// Maintain the invariant that any replica (uninitialized or initialized),

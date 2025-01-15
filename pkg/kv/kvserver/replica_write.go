@@ -767,7 +767,7 @@ func (r *Replica) evaluateWriteBatchWrapper(
 func (r *Replica) newBatchedEngine(
 	ba *kvpb.BatchRequest, g *concurrency.Guard,
 ) (storage.Batch, *storage.OpLoggerBatch) {
-	batch := r.store.TODOEngine().NewBatch()
+	batch := r.store.StateEngine().NewBatch()
 	if !batch.ConsistentIterators() {
 		// This is not currently needed for correctness, but future optimizations
 		// may start relying on this, so we assert here.

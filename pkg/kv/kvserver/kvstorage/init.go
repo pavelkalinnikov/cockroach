@@ -411,7 +411,7 @@ func (r Replica) Load(
 	if ls.TruncState, err = sl.LoadRaftTruncatedState(ctx, eng); err != nil {
 		return LoadedReplicaState{}, err
 	}
-	if ls.ReplState, err = sl.Load(ctx, stateEng, r.Desc); err != nil {
+	if ls.ReplState, err = sl.Load(ctx, stateloader.SMReader{Reader: stateEng}, r.Desc); err != nil {
 		return LoadedReplicaState{}, err
 	}
 

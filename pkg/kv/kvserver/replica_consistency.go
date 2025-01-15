@@ -472,7 +472,7 @@ type ReplicaDigest struct {
 func CalcReplicaDigest(
 	ctx context.Context,
 	desc roachpb.RangeDescriptor,
-	snap storage.Reader,
+	snap stateloader.SMReader,
 	mode kvpb.ChecksumMode,
 	limiter *quotapool.RateLimiter,
 	settings *cluster.Settings,
@@ -684,7 +684,7 @@ func (r *Replica) computeChecksumPostApply(
 	spans := rditer.MakeReplicatedKeySpans(&desc)
 	var snap storage.Reader
 	if r.store.cfg.SharedStorageEnabled || storage.ShouldUseEFOS(&r.ClusterSettings().SV) {
-		efos := r.store.TODOEngine().NewEventuallyFileOnlySnapshot(spans)
+		efos := r.store.StateEngine().NewEventuallyFileOnlySnapshot(spans)
 		if util.RaceEnabled {
 			ss := rditer.MakeReplicatedKeySpanSet(&desc)
 			defer ss.Release()
@@ -693,11 +693,11 @@ func (r *Replica) computeChecksumPostApply(
 			snap = efos
 		}
 	} else {
-		snap = r.store.TODOEngine().NewSnapshot()
+		snap = r.store.StateEngine().NewSnapshot()
 	}
 	if cc.Checkpoint {
 		sl := stateloader.Make(r.RangeID)
-		as, err := sl.LoadRangeAppliedState(ctx, snap)
+		as, err := sl.LoadRangeAppliedState(ctx, stateloader.SMReader{Reader: snap})
 		if err != nil {
 			log.Warningf(ctx, "unable to load applied index, continuing anyway")
 		}
@@ -754,7 +754,7 @@ func (r *Replica) computeChecksumPostApply(
 		); err != nil {
 			log.Errorf(ctx, "checksum collection did not join: %v", err)
 		} else {
-			result, err := CalcReplicaDigest(ctx, desc, snap, cc.Mode, r.store.consistencyLimiter, r.ClusterSettings())
+			result, err := CalcReplicaDigest(ctx, desc, stateloader.SMReader{Reader: snap}, cc.Mode, r.store.consistencyLimiter, r.ClusterSettings())
 			if err != nil {
 				log.Errorf(ctx, "checksum computation failed: %v", err)
 				result = nil

@@ -1463,16 +1463,6 @@ func (sc *StoreConfig) Tracer() *tracing.Tracer {
 	return sc.AmbientCtx.Tracer
 }
 
-// SeparatedEngine is a stepping stone for separating the raft log and state
-// machine storages. It allows callers of NewStore to pass in "two engines"
-// masquerading as one. This is not the intended end state, where it will most
-// likely make sense to pass in two engines. But for prototyping an
-// experimentation, this approach avoids large amounts of refactoring.
-type SeparatedEngine interface {
-	storage.Engine
-	SMEngine() storage.Engine
-}
-
 // NewStore returns a new instance of a store.
 func NewStore(
 	ctx context.Context, cfg StoreConfig, eng storage.Engine, nodeDesc *roachpb.NodeDescriptor,
@@ -1483,7 +1473,7 @@ func NewStore(
 	iot := ioThresholds{}
 	iot.Replace(nil, 1.0) // init as empty
 	stateEngine := eng
-	if engines, ok := eng.(SeparatedEngine); ok {
+	if engines, ok := eng.(kvstorage.SeparatedEngine); ok {
 		stateEngine = engines.SMEngine()
 	}
 	s := &Store{

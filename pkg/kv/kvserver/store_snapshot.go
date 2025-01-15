@@ -1943,7 +1943,7 @@ func SendEmptySnapshot(
 
 	ms, err = stateloader.WriteInitialReplicaState(
 		ctx,
-		eng,
+		stateloader.SMReadWriter{ReadWriter: eng},
 		ms,
 		desc,
 		roachpb.Lease{},
@@ -1957,7 +1957,7 @@ func SendEmptySnapshot(
 
 	// Use stateloader to load state out of memory from the previously created engine.
 	sl := stateloader.Make(desc.RangeID)
-	state, err := sl.Load(ctx, eng, &desc)
+	state, err := sl.Load(ctx, stateloader.SMReader{Reader: eng}, &desc)
 	if err != nil {
 		return err
 	}

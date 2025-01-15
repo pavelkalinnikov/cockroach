@@ -121,7 +121,7 @@ func worker(ctx context.Context, in checkInput) checkResult {
 	desc, eng := in.desc, in.eng
 
 	res := checkResult{desc: desc}
-	claimedMS, err := in.sl.LoadMVCCStats(ctx, eng)
+	claimedMS, err := in.sl.LoadMVCCStats(ctx, stateloader.SMReader{}) // FIXME
 	if err != nil {
 		res.err = err
 		return res

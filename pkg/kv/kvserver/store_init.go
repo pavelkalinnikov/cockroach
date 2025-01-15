@@ -144,7 +144,7 @@ func WriteInitialClusterData(
 			desc.RangeID, desc.StartKey, desc.EndKey, len(rangeInitialValues))
 		batch := eng.NewBatch()
 		stateBatch := batch
-		if sepEng, ok := eng.(SeparatedEngine); ok {
+		if sepEng, ok := eng.(kvstorage.SeparatedEngine); ok {
 			stateBatch = sepEng.SMEngine().NewBatch()
 			defer stateBatch.Close()
 		}
@@ -213,7 +213,7 @@ func WriteInitialClusterData(
 		}
 
 		if err := stateloader.WriteInitialRangeState(
-			ctx, stateBatch, batch, *desc, firstReplicaID, initialReplicaVersion,
+			ctx, stateloader.SMReadWriter{ReadWriter: stateBatch}, batch, *desc, firstReplicaID, initialReplicaVersion,
 		); err != nil {
 			return err
 		}
@@ -223,7 +223,7 @@ func WriteInitialClusterData(
 		}
 
 		sl := stateloader.Make(rangeID)
-		if err := sl.SetMVCCStats(ctx, stateBatch, &computedStats); err != nil {
+		if err := sl.SetMVCCStats(ctx, stateloader.SMReadWriter{ReadWriter: stateBatch}, &computedStats); err != nil {
 			return err
 		}
 

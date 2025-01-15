@@ -37,13 +37,14 @@ type LoadedReplicaState struct {
 // TODO(pavelkalinnikov): integrate with stateloader.
 func LoadReplicaState(
 	ctx context.Context,
-	eng storage.Reader,
+	reader storage.Reader,
+	stateReader stateloader.SMReader,
 	storeID roachpb.StoreID,
 	desc *roachpb.RangeDescriptor,
 	replicaID roachpb.ReplicaID,
 ) (LoadedReplicaState, error) {
 	sl := stateloader.Make(desc.RangeID)
-	id, err := sl.LoadRaftReplicaID(ctx, eng)
+	id, err := sl.LoadRaftReplicaID(ctx, reader)
 	if err != nil {
 		return LoadedReplicaState{}, err
 	}
@@ -53,16 +54,16 @@ func LoadReplicaState(
 	}
 
 	ls := LoadedReplicaState{ReplicaID: replicaID}
-	if ls.hardState, err = sl.LoadHardState(ctx, eng); err != nil {
+	if ls.hardState, err = sl.LoadHardState(ctx, reader); err != nil {
 		return LoadedReplicaState{}, err
 	}
-	if ls.TruncState, err = sl.LoadRaftTruncatedState(ctx, eng); err != nil {
+	if ls.TruncState, err = sl.LoadRaftTruncatedState(ctx, reader); err != nil {
 		return LoadedReplicaState{}, err
 	}
-	if ls.LastIndex, err = sl.LoadLastIndex(ctx, eng); err != nil {
+	if ls.LastIndex, err = sl.LoadLastIndex(ctx, reader); err != nil {
 		return LoadedReplicaState{}, err
 	}
-	if ls.ReplState, err = sl.Load(ctx, eng, desc); err != nil {
+	if ls.ReplState, err = sl.Load(ctx, stateReader, desc); err != nil {
 		return LoadedReplicaState{}, err
 	}
 
@@ -112,12 +113,17 @@ func CreateUninitializedReplica(
 	rangeID roachpb.RangeID,
 	replicaID roachpb.ReplicaID,
 ) error {
+	stateEng := eng
+	if se, ok := eng.(SeparatedEngine); ok {
+		stateEng = se.SMEngine()
+	}
+
 	// Before creating the replica, see if there is a tombstone which would
 	// indicate that this replica has been removed.
 	tombstoneKey := keys.RangeTombstoneKey(rangeID)
 	var tombstone kvserverpb.RangeTombstone
 	if ok, err := storage.MVCCGetProto(
-		ctx, eng, tombstoneKey, hlc.Timestamp{}, &tombstone, storage.MVCCGetOptions{},
+		ctx, stateEng, tombstoneKey, hlc.Timestamp{}, &tombstone, storage.MVCCGetOptions{},
 	); err != nil {
 		return err
 	} else if ok && replicaID < tombstone.NextReplicaID {
@@ -143,6 +149,6 @@ func CreateUninitializedReplica(
 
 	// Make sure that storage invariants for this uninitialized replica hold.
 	uninitDesc := roachpb.RangeDescriptor{RangeID: rangeID}
-	_, err := LoadReplicaState(ctx, eng, storeID, &uninitDesc, replicaID)
+	_, err := LoadReplicaState(ctx, eng, stateloader.SMReader{Reader: stateEng}, storeID, &uninitDesc, replicaID)
 	return err
 }
