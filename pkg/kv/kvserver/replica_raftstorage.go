@@ -209,14 +209,14 @@ func (r *Replica) GetSnapshot(
 			ss = rditer.MakeAllKeySpanSet(r.shMu.state.Desc)
 			defer ss.Release()
 		}
-		efos := r.store.TODOEngine().NewEventuallyFileOnlySnapshot(spans)
+		efos := r.store.StateEngine().NewEventuallyFileOnlySnapshot(spans)
 		if util.RaceEnabled {
 			snap = spanset.NewEventuallyFileOnlySnapshot(efos, ss)
 		} else {
 			snap = efos
 		}
 	} else {
-		snap = r.store.TODOEngine().NewSnapshot()
+		snap = r.store.StateEngine().NewSnapshot()
 	}
 	r.raftMu.Unlock()
 
@@ -678,11 +678,11 @@ func (r *Replica) applySnapshot(
 	// treated as fatal.
 
 	sl := stateloader.Make(desc.RangeID)
-	state, err := sl.Load(ctx, r.store.TODOEngine(), desc)
+	state, err := sl.Load(ctx, r.store.StateEngine(), desc)
 	if err != nil {
 		log.Fatalf(ctx, "unable to load replica state: %s", err)
 	}
-	truncState, err := sl.LoadRaftTruncatedState(ctx, r.store.TODOEngine())
+	truncState, err := sl.LoadRaftTruncatedState(ctx, r.store.LogEngine())
 	if err != nil {
 		log.Fatalf(ctx, "unable to load raft truncated state: %s", err)
 	}
